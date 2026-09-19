@@ -99,6 +99,7 @@ HandMade\build.bat
 | `explain/2026-9/2026-9-18.md` | 工作日志：把"编不过"变成"窗口能画"的全过程（字符集、子系统、`WNDCLASS` 逐字段、消息循环、踩过的坑速查） |
 | `explain/2026-9/2026-9-19.md` | 工作日志：看完 Day 2 Q&A 之后，按 Casey 的建议让窗口能正常关闭 |
 | `explain/.HandmadeHeroExplain/Day 003 - Allocating a Backbuffer.md` | Day 3 视频讲解笔记：`CreateDIBSection` / `BITMAPINFO` 逐字段 / `StretchDIBits` / 内存管理 |
+| `explain/HANDMADE_HERO_终点与导航.md` | **远期地图**：这个系列最后做出了什么（终点是 Day 667，项目已退休）；从我们现在的 Day 3 到 Day 667 的分段里程碑；想看"最成品"的画面该看哪几集 |
 
 ---
 

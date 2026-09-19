@@ -216,7 +216,7 @@ int StretchDIBits(HDC hdc,
 |---|---|
 | `hdc` | `BeginPaint` 给的那个 DC(他把 DC 一路传进来,而不是重新 `GetDC`) |
 | 目标矩形 | **`Paint.rcPaint`** —— Windows 要你重画的那块("脏区域") |
-| 源矩形 | `(0, 0, Width, Height)` —— 我们缓冲区里对应的那部分 |
+| 源矩形 | `(X, Y, Width, Height)` —— **和 `rcPaint` 用同一组数值**(缓冲和客户区一样大、原点都在左上角,所以源和目标的坐标就是同一套;写成 `(0,0,W,H)` 会把整张图缩进那一小块脏区域里) |
 | `lpBits` / `lpbmi` | `BitmapMemory` 和 `BitmapInfo` |
 | `iUsage` | `DIB_RGB_COLORS`(必须和创建时一致) |
 | `rop` | `SRCCOPY` |
