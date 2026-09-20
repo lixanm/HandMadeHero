@@ -216,7 +216,7 @@ int StretchDIBits(HDC hdc,
 |---|---|
 | `hdc` | `BeginPaint` 给的那个 DC(他把 DC 一路传进来,而不是重新 `GetDC`) |
 | 目标矩形 | **`Paint.rcPaint`** —— Windows 要你重画的那块("脏区域") |
-| 源矩形 | `(X, Y, Width, Height)` —— **和 `rcPaint` 用同一组数值**(缓冲和客户区一样大、原点都在左上角,所以源和目标的坐标就是同一套;写成 `(0,0,W,H)` 会把整张图缩进那一小块脏区域里) |
+| 源矩形 | 要写"缓冲里对应的那一块"。⚠️ **注意:自下而上的 DIB 原点在"左下角"**(文档原话),`ySrc` 是从**底部**往上量的 —— 所以不能直接把 `rcPaint` 的 Y 抄过来。**这正是 Casey 后来把 `biHeight` 改成负数的原因之一**:让内存/坐标约定和 Windows 的左上角约定一致。(另外全图贴 `0,0,W,H` 时原点在哪都无所谓,所以他先用全图 blit 绕开了这个问题。) |
 | `lpBits` / `lpbmi` | `BitmapMemory` 和 `BitmapInfo` |
 | `iUsage` | `DIB_RGB_COLORS`(必须和创建时一致) |
 | `rop` | `SRCCOPY` |
