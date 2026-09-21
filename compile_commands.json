@@ -1,0 +1,7 @@
+[
+  {
+    "directory": "D:/HandMade/HandMade/build",
+    "command": "clang --target=x86_64-pc-windows-msvc -std=c++17 -fsyntax-only -DHANDMADE_SLOW=1 -DHANDMADE_INTERNAL=1 -DHANDMADE_WIN32=1 -D_WIN32 -DWIN32 -D_WIN64 -D_WINDOWS \"-isystemC:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC/14.38.33130/include\" \"-isystemC:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC/14.38.33130/ATLMFC/include\" \"-isystemC:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Auxiliary/VS/include\" \"-isystemC:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/ucrt\" \"-isystemC:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/um\" \"-isystemC:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/shared\" \"-isystemC:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/winrt\" \"-isystemC:/Program Files (x86)/Windows Kits/10/include/10.0.26100.0/cppwinrt\" \"-isystemC:/Program Files (x86)/Windows Kits/NETFXSDK/4.8/include/um\" \"D:/HandMade/HandMade/code/win32_handmade.cpp\"",
+    "file": "D:/HandMade/HandMade/code/win32_handmade.cpp"
+  }
+]
