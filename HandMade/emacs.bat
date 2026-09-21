@@ -14,5 +14,10 @@ rem    So this version does NOT pass -q or -l: your own init.el loads normally.
 rem
 rem  KEEP THIS FILE ASCII-ONLY (cmd.exe reads .bat with the OEM codepage).
 rem ===========================================================================
+rem  Load the VS2022 x64 environment first, so Emacs (and clangd inside it)
+rem  inherits PATH/INCLUDE/LIB and can find cl.exe.  >NUL hides the banner.
 call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -no_logo >NUL
+rem  start "" <exe> = launch and do not wait (the empty "" is the window title).
+rem  %* passes on any arguments given to this script.  No -q / no -l on purpose,
+rem  so the normal init.el (your keybindings) is loaded.
 start "" "C:\THOTH\RuanJian\emacs-30.2\bin\runemacs.exe" %*

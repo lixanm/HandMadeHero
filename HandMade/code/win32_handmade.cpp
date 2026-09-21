@@ -27,88 +27,130 @@ typedef int64_t int64;
    ⚠️ Day 4 更正:用 StretchDIBits 就**不需要 DC、也不需要位图句柄**了
       (它直接收像素指针),所以 HBITMAP / HDC 这两个东西已经删掉。
    ============================================================================ */
-global_variable bool Running;              // 是否在跑    
-global_variable BITMAPINFO BitmapInfo;     // 描述这块内存长什么样(给 StretchDIBits 看的说明书)
-global_variable void *BitmapMemory;        // ★ 我们自己分配的像素内存
-global_variable int BitmapWidth;           // 缓冲尺寸(= 客户区尺寸)
-global_variable int BitmapHeight;
-global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 
-/**/
-internal void
-RanderWeirdGradient(int Xoffset,int Yoffset)
+
+struct win32_offscreen_buffer
 {
-    int Width = BitmapWidth;
-    int Height = BitmapHeight;
+	BITMAPINFO Info;     // 描述这块内存长什么样(给 StretchDIBits 看的说明书)
+	void* Memory;        // ★ 我们自己分配的像素内存
+	int Width;           // 缓冲尺寸(= 客户区尺寸)
+	int Height;
+    int Pitch;          //每行像素的字节
+};
+int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 
-    int Pitch = Width * BytesPerPixel;
-    uint8* Row = (uint8*)BitmapMemory;
-    for (int Y = 0; Y < BitmapHeight; ++Y)
+
+global_variable bool Running;              // 是否在跑    
+global_variable win32_offscreen_buffer GlobalBackBuffer;
+
+//想要返回两个值的时候，直接创建一个结构体就行
+struct win32_window_dimension
+{
+	int Width;           // 缓冲尺寸(= 客户区尺寸)
+	int Height;
+};
+
+win32_window_dimension 
+Win32GetWindowDimension(HWND Window)
+{
+    win32_window_dimension Result;
+
+	RECT ClientRect;
+	GetClientRect(Window, &ClientRect);
+
+	Result.Width = ClientRect.right - ClientRect.left;
+	Result.Height = ClientRect.bottom - ClientRect.top;
+
+    return Result;
+}
+
+
+/* 把整个后备缓冲渲染成"怪渐变":蓝通道跟着 X 变、绿通道跟着 Y 变,再加上偏移量。
+   偏移量每帧 +1,于是画面看起来在滚动 —— 这就是"动画"的全部秘密。
+   (Casey 后来说它其实该叫 BlueOffset / GreenOffset 更准确:我们偏移的是**颜色值**,不是坐标。
+    另外每个通道只有 8 位,所以每 256 个像素颜色会回绕一次 → 屏幕上一道一道的彩条。) */
+internal void
+RenderWeirdGradient(win32_offscreen_buffer Buffer,int Xoffset, int Yoffset)
+{
+    if (!Buffer.Memory) return;
+    uint8* Row = (uint8*)Buffer.Memory;
+    for (int Y = 0; Y < Buffer.Height; ++Y)
     {
-        uint8* Pixel = (uint8*)Row;
-        for (int X = 0; X < BitmapWidth; ++X)
+        uint32* Pixel = (uint32*)Row;
+        for (int X = 0; X < Buffer.Width; ++X)
         {
-            /* ⚠️ 内存里的实际顺序是「蓝 绿 红 填充」(B,G,R,A),**不是** R,G,B,A!
-               原因:小端机器上"内存按 R,G,B 排"读进寄存器会变成 B,G,R,而 Windows 作者
-               希望寄存器里看是 R,G,B,于是干脆把内存顺序定义成反的(见 Day 004 文档第五节)。
-               顺着这条规律:第 1 个字节 = 蓝、第 2 个 = 绿、第 3 个 = 红。 */
-            *Pixel++ = (uint8)(X + Xoffset);                    // 蓝
-            *Pixel++ = (uint8)(Y + Yoffset);                    // 绿
-            *Pixel++ = 0;                           // 红 
-            *Pixel++ = 0;                           // 填充
+            uint8 Blue  = (uint8)(X + Xoffset);
+            uint8 Green = (uint8)(Y + Yoffset);
 
+            /*
+                内存：  BB GG RR xx  “小端机器”
+                寄存器：xx RR GG BB
+                (见 Day 004 文档第五节)
+               —— 这里用"一次写 32 位",而不是逐字节写 4 次 ——
+               一个像素 = 一个 32 位值。小端机器上"32 位值的最低 8 位"正好落在内存的第一个字节,所以:
+                   蓝   → 最低 8 位        绿 → 左移 8 位        红 → 左移 16 位(还没用)   填充 → 最高 8 位
+               为什么值得这么写:每像素从"4 次字节写 + 4 次指针自增"变成"1 次 32 位写 + 1 次自增"。
+               实测 1280x655 每帧:逐字节 2.49ms → 一次写 1.06ms(不优化,快 2.35 倍);
+                                   开优化后也还快 1.22 倍。详见 Day 004 文档第五节。 */
+            *Pixel++ = ((uint32)Green << 8) | (uint32)Blue;
         }
-        Row += Pitch;
+        Row += Buffer.Pitch;
     }
 }
 
 
+
 internal void
-Win32ResizeDIBSection(int Width, int Height)
+Win32ResizeDIBSection(win32_offscreen_buffer *Buffer,int Width, int Height)//想修改Buffer的话还是要传指针
 {
     /* 窗口每改一次大小都会进来,所以先把上一块内存还给系统,否则拖一次窗口就泄漏一块内存。
        VirtualFree 的 MEM_RELEASE = 整块释放;大小传 0,它自己记得当初分配了多少。 */
-    if (BitmapMemory)
+    if (Buffer->Memory)
     {
-        VirtualFree(BitmapMemory, 0, MEM_RELEASE);
-        BitmapMemory = 0;
+        VirtualFree(Buffer->Memory, 0, MEM_RELEASE);
+        Buffer->Memory = 0;
     }
 
-    BitmapWidth  = Width;
-    BitmapHeight = Height;
+    Buffer->Width  = Width;
+    Buffer->Height = Height;
+    //还有像素字节大小等于4，但是在结构体里面已经定义过了
 
     /* 填 BITMAPINFOHEADER:描述这块位图长什么样 */
-    BitmapInfo.bmiHeader.biSize        = sizeof(BitmapInfo.bmiHeader); // 只算"头"的大小,不含颜色表
-    BitmapInfo.bmiHeader.biWidth       = BitmapWidth;
-    BitmapInfo.bmiHeader.biHeight      = -BitmapHeight;  // ★ 负数 = 自上而下的 DIB(内存第 0 行就是画面最上面那行)
+    Buffer->Info.bmiHeader.biSize        = sizeof(Buffer->Info.bmiHeader); // 只算"头"的大小,不含颜色表
+    Buffer->Info.bmiHeader.biWidth       = Buffer->Width;
+    Buffer->Info.bmiHeader.biHeight      = -Buffer->Height;  // ★ 负数 = 自上而下的 DIB(内存第 0 行就是画面最上面那行)
                                                          //   为什么要加这个负号:实测发现正数(自下而上)时,
                                                          //   内存第 0 行会被画在窗口最下面,渲染循环里的 Y 和屏幕的 Y 就反了
                                                          //   (渐变会上下颠倒)。取负之后两边一致。
-    BitmapInfo.bmiHeader.biPlanes      = 1;              // 必须是 1(位平面是老概念)
-    BitmapInfo.bmiHeader.biBitCount    = 32;             // 24 位够用,要 32 是为了 DWORD 对齐
-    BitmapInfo.bmiHeader.biCompression = BI_RGB;         // 不压缩:我们要写得快、贴得也快
+    Buffer->Info.bmiHeader.biPlanes      = 1;              // 必须是 1(位平面是老概念)
+    Buffer->Info.bmiHeader.biBitCount    = 32;             // 24 位够用,要 32 是为了 DWORD 对齐
+    Buffer->Info.bmiHeader.biCompression = BI_RGB;         // 不压缩:我们要写得快、贴得也快
     /* 其余字段(biSizeImage / biXPelsPerMeter / biYPelsPerMeter / biClrUsed / biClrImportant)
-       是全局变量,默认就是 0,不用管 */
+       是全局结构体,默认就是 0,不用管 */
 
     /* ★ 自己分配内存:每像素 4 字节(32bpp),所以需要 宽 * 高 * 4 字节。
        VirtualAlloc 是按页(4096 字节)给的,所以实际拿到的会比要的多一点,无所谓。
        MEM_COMMIT = 真的要这块内存(而不是只占地址范围);PAGE_READWRITE = 可读可写。 */
-    int BitmapMemorySize = BitmapWidth * BitmapHeight * BytesPerPixel;
-    BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+    int BitmapMemorySize = Buffer->Width * Buffer->Height * BytesPerPixel;
+    Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
-    RanderWeirdGradient(0, 0);
+    //TODO:
 
+
+    Buffer->Pitch = Width * BytesPerPixel;
 }
 
 /* 把后备缓冲贴到窗口上。
    名字里的 win32 不能省:UpdateWindow 是 Windows 自己的 API,重名会编译不过。 */
 internal void
-Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height)
+Win32DisplayBufferInWindow(HDC DeviceContext,     // 往哪儿画(窗口的 DC,"作画工具包")
+            int WindowWidth, int WindowHeight,      // 窗口有多大
+                  win32_offscreen_buffer Buffer)
 {
-    if (!BitmapMemory) return;   // 还没分配好(WM_SIZE 还没来过),先不画
+    if (!Buffer.Memory) return;   // 还没分配好(WM_SIZE 还没来过),先不画
 
-    int WindowWidth = WindowRect->right - WindowRect->left;
-    int WindowHeight = WindowRect->bottom - WindowRect->top;
+
+    //TODO:宽高比校正
 
     /* 把缓冲里的 (X,Y,Width,Height) 贴到窗口的 (X,Y,Width,Height)。
        两边是同一套坐标(缓冲和客户区一样大、原点都在左上角),所以数值相同。
@@ -121,8 +163,8 @@ Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, 
        以后要"固定分辨率渲染 + 放大到窗口"时,写反就会画错。 */
     StretchDIBits(DeviceContext,
                   0, 0, WindowWidth, WindowHeight,   // 目标:整个客户区
-                  0, 0, BitmapWidth, BitmapHeight,   // 源:整个后备缓冲
-                  BitmapMemory, &BitmapInfo,
+                  0, 0, Buffer.Width, Buffer.Height,   // 源:整个后备缓冲
+                  Buffer.Memory, &Buffer.Info,         // 像素数据首地址 + 格式说明书
                   DIB_RGB_COLORS,                    // 要和创建时一致
                   SRCCOPY);                          // 直接覆盖,不做位运算
 }
@@ -130,10 +172,10 @@ Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, 
 /* 窗口过程:系统把发给本窗口的每条消息都送进这里。
    CALLBACK = __stdcall —— 是"系统调用你",调用约定必须和系统一致。 */
 LRESULT CALLBACK
-WindowProc(HWND Window,
-           UINT Message,
-           WPARAM WParam,
-           LPARAM LParam)
+WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
+           UINT Message,     // 消息编号(WM_xxx)
+           WPARAM WParam,    // 消息附带的第 1 个参数(含义随消息变)
+           LPARAM LParam)    // 消息附带的第 2 个参数(含义随消息变)
 {
     LRESULT Result = 0;   // 返回值:含义随消息变;只有 default 分支会给它赋值
 
@@ -142,16 +184,9 @@ WindowProc(HWND Window,
     switch (Message)
     {
         
-        case WM_SIZE:   // 窗口尺寸变了(Day 3 起在这里重建后备缓冲)
+        case WM_SIZE:   // 窗口尺寸变了
         {
-            RECT ClientRect;
-            GetClientRect(Window, &ClientRect);
-
-			int Width = ClientRect.right - ClientRect.left;
-			int Height = ClientRect.bottom - ClientRect.top;
-
-            Win32ResizeDIBSection(Width, Height);   // 按新的客户区尺寸重建后备缓冲
-            OutputDebugStringA("WM_SiZE\n");
+            OutputDebugStringA("WM_SIZE\n");
         } break;
 
         /* 用户点了 X / Alt+F4。
@@ -171,10 +206,17 @@ WindowProc(HWND Window,
         {
             Running = false;
         } break;
-
-
+        /*
+        case WM_SETCURSOR://鼠标消失
+        {
+            SetCursor(0);
+        }break;
+        */
         case WM_PAINT:                  //绘制
         {
+            /* 现在主循环每帧都在 blit,这里的贴图有点重复 —— 但 WM_PAINT 仍然**必须处理**:
+               BeginPaint 会清掉"这块脏了"的标记,不处理的话系统会一直给你发 WM_PAINT(窗口疯狂重画)。
+               (Paint.rcPaint 是系统给的"脏区域";我们现在整窗重画,所以用不上它。) */
             PAINTSTRUCT Paint;
             HDC DeviceContext = BeginPaint(Window, &Paint);
 
@@ -186,9 +228,10 @@ WindowProc(HWND Window,
 
             /* 把后备缓冲贴到窗口上(取代了之前的 PatBlt 涂白涂黑)。
                Win32UpdateWindow 现在还多要一个"客户区矩形",用来知道窗口有多大 —— 现取一个给它。 */
-            RECT ClientRect;
-            GetClientRect(Window, &ClientRect);
-            Win32UpdateWindow(DeviceContext, &ClientRect, X, Y, Width, Height);
+            
+            win32_window_dimension Dimension = Win32GetWindowDimension(Window);
+
+            Win32DisplayBufferInWindow(DeviceContext, Dimension.Width,Dimension.Height, GlobalBackBuffer);
 			EndPaint(Window, &Paint);
         }break;
 
@@ -203,17 +246,20 @@ WindowProc(HWND Window,
 
 /* 程序入口(Windows 子系统找的是 WinMain,不是 main) */
 int WINAPI
-WinMain(HINSTANCE hInstance,       // 本程序的实例句柄:注册窗口类、创建窗口都要用它
-        HINSTANCE hPrevInstance,   // Win32 里永远是 NULL(Win16 时代的遗留物)
-        LPSTR lpCmdLine,           // 命令行参数(不含程序名),类型是 ANSI 字符串
-        int nShowCmd)              // 窗口该怎么显示(我们用了 WS_VISIBLE,这里用不到)
+WinMain(HINSTANCE hInstance,       
+        HINSTANCE hPrevInstance,   
+        LPSTR lpCmdLine,           
+        int nShowCmd)             
 {
     /* ① 窗口类登记表。= {0} 不能省:局部变量不清零就是栈上的垃圾值 */
     WNDCLASS WindowClass = {0};
 
+    /*在这里修改位图大小，而不是在回调函数中？？？*/
+	Win32ResizeDIBSection(&GlobalBackBuffer, 1280, 720);   // 按新的客户区尺寸重建后备缓冲
+
     
-    //WindowClass.style = /*CS_HREDRAW | CS_VREDRAW |*/ CS_OWNDC;  //样式也去掉(以后要长期持有一块 DC 时,CS_OWNDC 可能要加回来)
-    WindowClass.lpfnWndProc = WindowProc;   // 消息处理函数(最关键的一格)
+    WindowClass.style = CS_HREDRAW | CS_VREDRAW /*| CS_OWNDC*/;  //样式也去掉(以后要长期持有一块 DC 时,CS_OWNDC 可能要加回来)
+    WindowClass.lpfnWndProc = WindowMainWindowCallback;   // 消息处理函数(最关键的一格)
     WindowClass.hInstance = hInstance;
     //WindowClass.hIcon = LoadIcon(0, IDI_APPLICATION);//图标
     //WindowClass.hCursor = LoadCursor(0, IDC_ARROW);//光标，不需要
@@ -228,42 +274,68 @@ WinMain(HINSTANCE hInstance,       // 本程序的实例句柄:注册窗口类�
     /* ② 登记(返回 0 = 失败,可用 GetLastError 查原因) */
     if (RegisterClass(&WindowClass))
     {
-		/* ③ 照表造窗口(12 个参数的含义见文档) */
-		HWND Window = CreateWindowEx(0,
-			WindowClassName,
-			"Handmade Hero",
-			WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			0,
-			0,
-			hInstance,
-			0);
-		if (Window)   // 创建失败会返回 0;别带着一个不存在的窗口进消息循环
-		{
+        /* ③ 照表造窗口(12 个参数的含义见文档) */
+        HWND Window = CreateWindowEx(0,                        // 扩展样式:不用
+            WindowClassName,                                   // 用哪个窗口类(必须和注册时一致)
+            "Handmade Hero",                                   // 标题栏上的文字
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,                  // 普通可缩放窗口 + 立刻显示出来
+            CW_USEDEFAULT,                                     // X:让系统决定放哪儿
+            CW_USEDEFAULT,                                     // Y:让系统决定放哪儿
+            CW_USEDEFAULT,                                     // 宽:让系统决定
+            CW_USEDEFAULT,                                     // 高:让系统决定
+            0,                                                 // 父窗口:没有
+            0,                                                 // 菜单:没有
+            hInstance,                                         // 所属程序实例
+            0);                                                // 额外的创建参数:不用
+        if (Window)   // 创建失败会返回 0;别带着一个不存在的窗口进消息循环
+        {
+
+            /* 动画的偏移量:⚠️ 必须声明在循环**外面**!
+               写在循环体里 = 每一帧都被重新初始化成 0,画面永远不动
+               —— 这正是 Casey 在 Day 4 现场犯的错,记在这儿免得再踩。
+               (Y 方向现在一直传 0;想让它也动起来,照 X 的样子 ++ 就行。) */
+            int Xoffset = 0;
+            int Yoffset = 0;
+
+			MSG Message;                              // 装一条消息的盒子
             Running = true;
-            while (Running) // 无限循环(用 for(;;) 而不是 while(1):后者会触发"条件表达式不是常量"的警告)
+            while (Running)   // 条件是个全局标志,WM_CLOSE / WM_DESTROY 里会把它设成 false
             {
-				BOOL PeekMessageA(
-					[out]          LPMSG lpMsg,
-					[in, optional] HWND  hWnd,
-					[in]           UINT  wMsgFilterMin,
-					[in]           UINT  wMsgFilterMax,
-					[in]           UINT  wRemoveMsg
-				);
-                MSG Message;
-                /* GetMessage:从本线程的消息队列取一条;队列空时会阻塞(让出 CPU,不烧 CPU)。
-                   返回值 >0 = 取到消息 / 0 = 收到 WM_QUIT(该退出了) / -1 = 出错 */
-                BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
-                if (MessageResult > 0) {
-                    TranslateMessage(&Message);   // WM_KEYDOWN / WM_KEYUP 翻译成 WM_CHAR
-                    DispatchMessage(&Message);    // 投给 WindowProc —— 系统在这一步回调你
+                /* —— ① 先把消息队列**排空** ——
+                   内层 while 会一直取到队列空为止。用 PeekMessage 而不是 GetMessage 的原因
+                   见上面那段说明:它**不阻塞**,所以队列空了以后我们还能接着往下跑。 */
+
+                while (PeekMessageA(&Message,             // 取一条消息填进这个盒子
+                                    0, 0, 0,              // 三个 0 = 不过滤,什么消息都要
+                                    PM_REMOVE))           // 取走它(而不是只看一眼留着)
+                {
+                    if (Message.message == WM_QUIT)
+                    {
+                        Running = false;      // PeekMessage 不会用"返回 0"告诉我们该退出,得自己查
+                    }
+
+					TranslateMessage(&Message);   // WM_KEYDOWN / WM_KEYUP 翻译成 WM_CHAR
+					DispatchMessage(&Message);    // 投给 WindowProc —— 系统在这一步回调你
                 }
-                else {
-                    break;                        // WM_QUIT 或出错:跳出循环,程序结束
-                }
+
+                /* —— ② 渲染:往我们自己的那块内存里写像素(此时屏幕上还看不到) —— */
+                RenderWeirdGradient(GlobalBackBuffer,Xoffset, Yoffset);
+
+                /* —— ③ 贴图:⚠️ 这一步不能少!只渲染不 blit,屏幕上什么都不会变
+                       —— 这也是 Casey 在 Day 4 现场犯的第二个错。
+                       GetDC 是"借"、ReleaseDC 是"还",必须成对出现。 —— */
+                HDC DeviceContext = GetDC(Window);
+
+                win32_window_dimension Dim = Win32GetWindowDimension(Window);
+
+                Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, GlobalBackBuffer);
+                ReleaseDC(Window, DeviceContext);
+
+                /* —— ④ 偏移量往前走一格 → 下一帧和这一帧就不一样了 = 动起来了 ——
+                   (现在没有任何时间控制:循环跑多快就多快,会占满一个 CPU 核。
+                    以后会加计时 + Sleep 让速度稳定 —— Casey 在 Q&A 里提过 Sleep 。) */
+                ++Xoffset;
+                ++Yoffset;
             }
 		}
 		else
