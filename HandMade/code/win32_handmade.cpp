@@ -37,16 +37,16 @@ struct win32_offscreen_buffer
 	int Height;
     int Pitch;          //每行像素的字节
 };
-int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 
 
+global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 global_variable bool Running;              // 是否在跑    
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 
 //想要返回两个值的时候，直接创建一个结构体就行
 struct win32_window_dimension
 {
-	int Width;           // 缓冲尺寸(= 客户区尺寸)
+	int Width;           // 缓冲尺寸(= 窗口尺寸)
 	int Height;
 };
 
@@ -113,7 +113,9 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer,int Width, int Height)//想
 
     Buffer->Width  = Width;
     Buffer->Height = Height;
-    //还有像素字节大小等于4，但是在结构体里面已经定义过了
+
+	Buffer->Pitch = Width * BytesPerPixel;
+
 
     /* 填 BITMAPINFOHEADER:描述这块位图长什么样 */
     Buffer->Info.bmiHeader.biSize        = sizeof(Buffer->Info.bmiHeader); // 只算"头"的大小,不含颜色表
@@ -137,7 +139,6 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer,int Width, int Height)//想
     //TODO:
 
 
-    Buffer->Pitch = Width * BytesPerPixel;
 }
 
 /* 把后备缓冲贴到窗口上。
@@ -220,11 +221,6 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
             PAINTSTRUCT Paint;
             HDC DeviceContext = BeginPaint(Window, &Paint);
 
-            /* rcPaint = 系统告诉你的"脏区域",只需要重画这一块 */
-            int X = Paint.rcPaint.left;
-            int Y = Paint.rcPaint.top;
-            int Width  = Paint.rcPaint.right  - Paint.rcPaint.left;
-            int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
 
             /* 把后备缓冲贴到窗口上(取代了之前的 PatBlt 涂白涂黑)。
                Win32UpdateWindow 现在还多要一个"客户区矩形",用来知道窗口有多大 —— 现取一个给它。 */
