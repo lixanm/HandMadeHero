@@ -4,6 +4,7 @@
 
 #include <windows.h>
 #include <stdint.h>
+#include <xinput.h>//Xinput.h` 只有类型和声明,没有实现
 
 #define  local_persist static
 #define  global_variable static
@@ -38,11 +39,6 @@ struct win32_offscreen_buffer
     int Pitch;          //每行像素的字节
 };
 
-
-global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
-global_variable bool Running;              // 是否在跑    
-global_variable win32_offscreen_buffer GlobalBackBuffer;
-
 //想要返回两个值的时候，直接创建一个结构体就行
 struct win32_window_dimension
 {
@@ -50,7 +46,46 @@ struct win32_window_dimension
 	int Height;
 };
 
-win32_window_dimension 
+/*动态加载库*///**  Run-Time Dynamic Linking  **  运行时动态链接
+//NOTE: XInputGetState
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(_In_  DWORD  dwUserIndex,_Out_ XINPUT_STATE* pState)
+typedef X_INPUT_GET_STATE(x_input_get_state);
+//typedef DWORD WINAPI x_input_get_state(_In_  DWORD  dwUserIndex,_Out_ XINPUT_STATE* pState)
+X_INPUT_GET_STATE(XInputGetStateStub)
+{
+    return 0;
+}//DWORD __stdcall XInputGetStateStub(DWORD dwUserIndex, XINPUT_STATE* pState) { return 0; }
+global_variable x_input_get_state* XInputGetState_=XInputGetStateStub;//_:动态加载
+#define XInputGetState XInputGetState_
+
+//NOTE: XInputSetState
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(_In_ DWORD   dwUserIndex, _In_ XINPUT_VIBRATION* pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state);
+X_INPUT_SET_STATE(XInputSetStateStub)
+{
+    return 0;
+}
+global_variable x_input_set_state* XInputSetState_=XInputSetStateStub;
+#define XInputSetState XInputSetState_
+
+
+global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
+global_variable bool Running;              // 是否在跑    
+global_variable win32_offscreen_buffer GlobalBackBuffer;
+
+
+internal void 
+Win32LoadXinput()
+{
+    HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll");
+    if (XInputLibrary)
+    {
+        XInputGetState = (x_input_get_state*)GetProcAddress(XInputLibrary,"XInputGetState");
+        XInputSetState = (x_input_set_state*)GetProcAddress(XInputLibrary,"XInputSetState");
+    }
+}
+
+internal win32_window_dimension
 Win32GetWindowDimension(HWND Window)
 {
     win32_window_dimension Result;
@@ -70,14 +105,14 @@ Win32GetWindowDimension(HWND Window)
    (Casey 后来说它其实该叫 BlueOffset / GreenOffset 更准确:我们偏移的是**颜色值**,不是坐标。
     另外每个通道只有 8 位,所以每 256 个像素颜色会回绕一次 → 屏幕上一道一道的彩条。) */
 internal void
-RenderWeirdGradient(win32_offscreen_buffer Buffer,int Xoffset, int Yoffset)
+RenderWeirdGradient(win32_offscreen_buffer *Buffer,int Xoffset, int Yoffset)
 {
-    if (!Buffer.Memory) return;
-    uint8* Row = (uint8*)Buffer.Memory;
-    for (int Y = 0; Y < Buffer.Height; ++Y)
+    if (!Buffer->Memory) return;
+    uint8* Row = (uint8*)Buffer->Memory;
+    for (int Y = 0; Y < Buffer->Height; ++Y)
     {
         uint32* Pixel = (uint32*)Row;
-        for (int X = 0; X < Buffer.Width; ++X)
+        for (int X = 0; X < Buffer->Width; ++X)
         {
             uint8 Blue  = (uint8)(X + Xoffset);
             uint8 Green = (uint8)(Y + Yoffset);
@@ -94,7 +129,7 @@ RenderWeirdGradient(win32_offscreen_buffer Buffer,int Xoffset, int Yoffset)
                                    开优化后也还快 1.22 倍。详见 Day 004 文档第五节。 */
             *Pixel++ = ((uint32)Green << 8) | (uint32)Blue;
         }
-        Row += Buffer.Pitch;
+        Row += Buffer->Pitch;
     }
 }
 
@@ -146,9 +181,9 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer,int Width, int Height)//想
 internal void
 Win32DisplayBufferInWindow(HDC DeviceContext,     // 往哪儿画(窗口的 DC,"作画工具包")
             int WindowWidth, int WindowHeight,      // 窗口有多大
-                  win32_offscreen_buffer Buffer)
+                  win32_offscreen_buffer *Buffer)
 {
-    if (!Buffer.Memory) return;   // 还没分配好(WM_SIZE 还没来过),先不画
+    if (!Buffer->Memory) return;   // 还没分配好(WM_SIZE 还没来过),先不画
 
 
     //TODO:宽高比校正
@@ -164,8 +199,8 @@ Win32DisplayBufferInWindow(HDC DeviceContext,     // 往哪儿画(窗口的 DC,"
        以后要"固定分辨率渲染 + 放大到窗口"时,写反就会画错。 */
     StretchDIBits(DeviceContext,
                   0, 0, WindowWidth, WindowHeight,   // 目标:整个客户区
-                  0, 0, Buffer.Width, Buffer.Height,   // 源:整个后备缓冲
-                  Buffer.Memory, &Buffer.Info,         // 像素数据首地址 + 格式说明书
+                  0, 0, Buffer->Width, Buffer->Height,   // 源:整个后备缓冲
+                  Buffer->Memory, &Buffer->Info,         // 像素数据首地址 + 格式说明书
                   DIB_RGB_COLORS,                    // 要和创建时一致
                   SRCCOPY);                          // 直接覆盖,不做位运算
 }
@@ -187,7 +222,6 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
         
         case WM_SIZE:   // 窗口尺寸变了
         {
-            OutputDebugStringA("WM_SIZE\n");
         } break;
 
         /* 用户点了 X / Alt+F4。
@@ -200,7 +234,6 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
 
 		case WM_ACTIVATEAPP:
 		{
-			OutputDebugStringA("WM_ACTIVATEAPP\n");
 		} break;
         
         case WM_DESTROY:  // 窗口正在销毁:发 WM_QUIT,让消息循环结束
@@ -213,6 +246,66 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
             SetCursor(0);
         }break;
         */
+
+        /*键盘控制*/
+        case WM_SYSKEYDOWN://按下ALT再按下某键
+        case WM_SYSKEYUP:
+        case WM_KEYDOWN://按下某键
+        case WM_KEYUP://松开
+        {
+            uint32 VKCode = (uint32)WParam;
+            bool WasDown = ((LParam & (1 << 30)) != 0);//在这次按键事件中，该键原本是抬起还是按下
+            bool IsDown = ((LParam & (1 << 31)) == 0);//现在呢
+
+            /* ★ 过滤"按键重复":按住不放会反复收到 WM_KEYDOWN,那时 WasDown == IsDown == true;
+               只有"状态真的变了"才是真正的一次按下 / 一次抬起。 */
+            if (WasDown != IsDown)
+            {
+                if (VKCode == 'W')
+                {
+                }
+                else if (VKCode == 'A')
+                {
+                }
+                else if (VKCode == 'S')
+                {
+                }
+                else if (VKCode == 'D')
+                {
+                }
+                else if (VKCode == 'Q')
+                {
+                }
+                else if (VKCode == 'E')
+                {
+                }
+                else if (VKCode == VK_UP)
+                {
+                }
+                else if (VKCode == VK_LEFT)
+                {
+                }
+                else if (VKCode == VK_DOWN)
+                {
+                }
+                else if (VKCode == VK_RIGHT)
+                {
+                }
+                else if (VKCode == VK_ESCAPE)
+                {
+                    if (IsDown)
+                    {
+                    }
+                    if (WasDown)
+                    {
+                    }
+                }
+                else if (VKCode == VK_SPACE)
+                {
+                }
+            }
+        }break;
+
         case WM_PAINT:                  //绘制
         {
             /* 现在主循环每帧都在 blit,这里的贴图有点重复 —— 但 WM_PAINT 仍然**必须处理**:
@@ -227,7 +320,7 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
             
             win32_window_dimension Dimension = Win32GetWindowDimension(Window);
 
-            Win32DisplayBufferInWindow(DeviceContext, Dimension.Width,Dimension.Height, GlobalBackBuffer);
+            Win32DisplayBufferInWindow(DeviceContext, Dimension.Width,Dimension.Height, &GlobalBackBuffer);
 			EndPaint(Window, &Paint);
         }break;
 
@@ -247,6 +340,8 @@ WinMain(HINSTANCE hInstance,
         LPSTR lpCmdLine,           
         int nShowCmd)             
 {
+    Win32LoadXinput();
+
     /* ① 窗口类登记表。= {0} 不能省:局部变量不清零就是栈上的垃圾值 */
     WNDCLASS WindowClass = {0};
 
@@ -254,7 +349,7 @@ WinMain(HINSTANCE hInstance,
 	Win32ResizeDIBSection(&GlobalBackBuffer, 1280, 720);   // 按新的客户区尺寸重建后备缓冲
 
     
-    WindowClass.style = CS_HREDRAW | CS_VREDRAW /*| CS_OWNDC*/;  //样式也去掉(以后要长期持有一块 DC 时,CS_OWNDC 可能要加回来)
+    WindowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;  //样式
     WindowClass.lpfnWndProc = WindowMainWindowCallback;   // 消息处理函数(最关键的一格)
     WindowClass.hInstance = hInstance;
     //WindowClass.hIcon = LoadIcon(0, IDI_APPLICATION);//图标
@@ -314,8 +409,82 @@ WinMain(HINSTANCE hInstance,
 					DispatchMessage(&Message);    // 投给 WindowProc —— 系统在这一步回调你
                 }
 
+
+                //键盘手柄
+				DWORD dwResult;
+				for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ControllerIndex++)
+				{
+					XINPUT_STATE ControllerState;
+					ZeroMemory(&ControllerState, sizeof(XINPUT_STATE));
+
+					// Simply get the state of the controller from XInput.
+					dwResult = XInputGetState(ControllerIndex, &ControllerState);
+
+					if (dwResult == ERROR_SUCCESS)
+					{
+						// Controller is connected
+                        XINPUT_GAMEPAD* Pad = &ControllerState.Gamepad;
+
+                        bool Up = Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP;
+                        bool Down = Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN;
+                        bool Left = Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT;
+                        bool Right = Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT;
+
+                        bool Start = Pad->wButtons & XINPUT_GAMEPAD_START;
+                        bool Back = Pad->wButtons & XINPUT_GAMEPAD_BACK;
+
+                        //按下摇杆
+                        //bool LeftThumb = Pad->wButtons & XINPUT_GAMEPAD_LEFT_THUMB;
+                        //bool RightThumb = Pad->wButtons & XINPUT_GAMEPAD_RIGHT_THUMB;
+                        
+                        //肩键
+                        bool LeftShoulder = Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER;
+                        bool RightShoulder = Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER;
+
+                        bool AButton = Pad->wButtons & XINPUT_GAMEPAD_A;
+                        bool BButton = Pad->wButtons & XINPUT_GAMEPAD_B;
+                        bool XButton = Pad->wButtons & XINPUT_GAMEPAD_X;
+                        bool YButton = Pad->wButtons & XINPUT_GAMEPAD_Y;
+
+                        //扳机。触发器模拟控件的当前值。 该值介于 0 和 255 之间。
+						//BYTE  bLeftTrigger;
+						//BYTE  bRightTrigger;
+                        
+                        //左操纵杆 x/y 轴值
+                        SHORT StickX = Pad->sThumbLX;
+						SHORT StickY = Pad->sThumbLY;
+
+                        //右操纵杆 x/y 轴值
+						//SHORT sThumbRX;
+						//SHORT sThumbRY;
+
+
+                        /*操控*/
+                        Xoffset += StickX >>12;
+                        Yoffset += StickY >>12;
+
+                        if (AButton)
+                        {
+                            Yoffset += 2;
+                        }
+
+					}
+					else
+					{
+						// Controller is not connected
+					}
+				}
+
+                //手柄震动
+                /*
+                XINPUT_VIBRATION Vibration;
+                Vibration.wLeftMotorSpeed = 65535;   // WORD,0~65535
+                Vibration.wRightMotorSpeed = 65535;
+                XInputSetState(0, &Vibration);*/
+
+
                 /* —— ② 渲染:往我们自己的那块内存里写像素(此时屏幕上还看不到) —— */
-                RenderWeirdGradient(GlobalBackBuffer,Xoffset, Yoffset);
+                RenderWeirdGradient(&GlobalBackBuffer,Xoffset, Yoffset);
 
                 /* —— ③ 贴图:⚠️ 这一步不能少!只渲染不 blit,屏幕上什么都不会变
                        —— 这也是 Casey 在 Day 4 现场犯的第二个错。
@@ -324,20 +493,14 @@ WinMain(HINSTANCE hInstance,
 
                 win32_window_dimension Dim = Win32GetWindowDimension(Window);
 
-                Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, GlobalBackBuffer);
+                Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, &GlobalBackBuffer);
                 ReleaseDC(Window, DeviceContext);
 
-                /* —— ④ 偏移量往前走一格 → 下一帧和这一帧就不一样了 = 动起来了 ——
-                   (现在没有任何时间控制:循环跑多快就多快,会占满一个 CPU 核。
-                    以后会加计时 + Sleep 让速度稳定 —— Casey 在 Q&A 里提过 Sleep 。) */
-                ++Xoffset;
-                ++Yoffset;
             }
 		}
 		else
 		{
             // TODO: 失败时应该记一条日志(GetLastError)
-			OutputDebugStringA("CreateWindowEx failed\n");
 		}
     }
     else 
