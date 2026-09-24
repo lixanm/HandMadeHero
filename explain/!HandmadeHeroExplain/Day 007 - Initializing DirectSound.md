@@ -179,31 +179,129 @@ typedef int32 bool32;      /* 只要"是不是 0",不要那个 0/1 规范化 */
 
 ## 六、DirectSound:整体设计(他画的那张"糟糕的图")
 
-### 为什么是 DirectSound
+> 📌 这一节**一行代码都没有**,但它是整集最值钱的部分 —— **概念错了,后面全错**。
+> 下面 6.1~6.8 是按他画的图重新拆的层次;他的原话都带时间戳,建议挑 `00:20:11` 和 `01:11:41` 两段原声听一遍。
+
+### 6.1 为什么是 DirectSound
 
 > `00:17:27` "We're going to be using DirectSound so that we'll have reasonable compatibility with older systems"
 
 - 他想顺带保留**能编到 Windows XP** 的能力(顺带练"向后兼容"这回事)。
 - 新 API 呢?`00:18:06` "There are newer audio APIs. I don't think any of them are particularly good anyway" —— 可能延迟好一点,但他不做新 API 的编程,不评价。
 
-### ★ 环形缓冲 + "写在播放头前面"
+### 6.2 ★ 根本矛盾:声卡按**自己的节拍**喝水,你只能提前倒
+
+```
+声卡:     每 1/48,000 秒 喝走一个样本 —— 永不停止,不等你
+你的游戏:  每 1/60 秒 才醒一次,一次只能倒 800 个样本
+```
+
+| 量 | 值 |
+|---|---|
+| 采样率 | **48 kHz** = 每秒 48,000 个**样本帧**(sample frame:左右声道算一帧) |
+| 游戏帧率 | 60 fps(他说也可能 30,取决于 CPU / 分辨率等) |
+| 每帧要产出 | 48,000 ÷ 60 = **800 样本帧**(30 fps 则 1,600) |
+
+⭐ 注意这 800 是"**被帧率推出来的**",不是音频自己定的:
+
+> `00:19:27` "we're going to be outputting **about 800 samples per frame to line up with the video**"
+
+两个时钟**没有任何关系** —— 游戏卡一下、Windows 抢走 CPU 一会儿,声卡照样在喝。
+
+### 6.3 ★ 为什么不能"就地写":写头必须跑在播放头**前面**
+
+这是本节最关键的一句(`00:20:11`,值得听原声):
+
+> "we can't actually write directly into there, because if we wrote directly into there we would basically have a problem where **where it was playing would get past where we were trying to write before we finished writing into it** — because there's **a bunch of latency in just writing as well**. So what we actually need to do is we need to **write a little bit ahead of wherever it actually is**."
+
+翻成人话:
+
+- 写内存**不是瞬间的**(要时间,还可能被操作系统打断);
+- 如果你从"播放头当前位置"开始写,等你写完一小段,**播放头早就走过去、跑到你正在写的区域里了** ⇒ 它读到你写了一半的数据 ⇒ **咔哒声**;
+- 所以:**写头永远领先播放头一段距离**。这段距离就是"缓冲",它换来的是"**允许你晚一点再写**"。
+
+```
+   播放头 playCursor                     写头 writeCursor
+        ↓                                      ↓
+  ──────●══════════════════════════════════════●──────────────────▶ 时间
+        │←── 已写好、正在播/将要播的这段 ──→│←── 下次要写的区域 ──→│
+        └──────────────────────────────────┴────────────────────┘
+                    这一段"领先量" = 你的缓冲 / 安全垫
+```
+
+- `IDirectSoundBuffer::GetCurrentPosition` 一次给你**两个**游标:`playCursor` 和 `writeCursor`,后者就是"从这里往后写是安全的"。🟡 安全余量具体多少由驱动决定,文档没给死数。
+- 因为缓冲是环形的,"下一次要写的区域"**可能跨过末尾绕回开头** ⇒ 下一集的 `Lock()` 会返回**两段**内存,这是代码里的第一个坑。
+
+### 6.4 环形缓冲的具体数字
 
 | 事实 | 说明 |
 |---|---|
-| 缓冲是**环形**的 | DirectSound 播到末尾自动回到开头,无限循环 |
-| 大小 | 他选 **≈2 秒**(后面 Q&A 解释为什么) |
-| 采样率 | **48 kHz** = 每秒 48,000 样本(他还提到 44.1 kHz 是另一种常见值) |
-| 每帧要写多少 | 48,000 ÷ 60 = **约 800 样本/帧**(30fps 则 1,600) |
-| **关键** | **必须写在"播放位置前面一点"**,不能写在播放头当前位置 —— 因为**写入本身也有延迟**,硬写会把还没播的数据覆盖掉 |
+| 缓冲是**环形**的 | 他原话(`00:18:33`):"when it gets to the end it just **comes right back around to the beginning**… it's just going to be constantly looping this buffer" |
+| 大小 | 他选 **≈2 秒**(为什么见 6.5) |
+| 采样率 | **48 kHz**(他也提到 44.1 kHz 是另一种常见值) |
 
-### 关于"画面和声音对齐"的一段(值得单独记)
+按 48 kHz / 16 位 / 立体声算一遍(下一集要用这些数):
+
+| 量 | 值 |
+|---|---|
+| 一个样本帧 | 2 声道 × 16 位 = **4 字节** |
+| 每秒字节数 | 48,000 × 4 = **192,000 B/s** |
+| 每帧要写 | 800 帧 = **3,200 字节**(约 16.7 ms 的声音) |
+| 2 秒缓冲 | 96,000 帧 = **384,000 字节** |
+| 每帧占缓冲的比例 | 3,200 ÷ 384,000 ≈ **0.83%** |
+
+### 6.5 ★★ 2 秒缓冲到底解决什么 —— **"缓冲长度 ≠ 延迟"**
+
+**先拆开两个独立的量**(这是最容易混的地方):
+
+| 你真正在意的 | 由谁决定 |
+|---|---|
+| **声音"迟到"多久**(按键 → 发声的延迟) | **写头领先播放头多远**(写多前) |
+| **卡一下能不能扛住** | **缓冲总长度**(能容忍多久不写) |
+
+⚠️ 所以"**缓冲 2 秒**" **不等于** "**延迟 2 秒**"。缓冲长度只是**上限**(最多容忍 2 秒不写),实际延迟取决于写头放哪儿。
+
+**他要解决的到底是什么**(`01:11:41` 起,他自己的解释)—— 掉帧时有两种应对:
+
+| 策略 | 好处 | 代价 |
+|---|---|---|
+| 写得很靠前 | 不容易断 | **延迟大**,或者**反复覆盖**已写数据 |
+| 只提前 ~1 帧 | 延迟小,偶尔掉一帧也没事 | 掉多了就"跳过一段" |
+
+而**最常见的成品游戏**是第三种(最糟的):**缓冲太窄**。
+
+> `01:12:30` "that thing that you can really hear when it **loops really quickly**. That's because they had **too narrow of a buffer**. So it was playing **the same like 800 samples or 1,600 samples over and over again**, which is **immediately audible to the ear as a bad sound**."
+
+- **窄缓冲为什么难听**:缓冲只有 16 ms,一旦没续上,声卡就在那 16 ms 里**高速循环**(每秒 60 次)⇒ 耳朵立刻听出机械的"嗡嗡/哒哒"声。
+- **2 秒缓冲为什么好听**(`01:12:45`):"you can actually just **full-on stop sending samples**. And the stuff that's in the buffer is whatever happened **for the past two seconds**."
+  关键:**缓冲里那 2 秒是之前写进去的真实音频**,你停了,声卡就顺着往下读 —— 读到的是**连贯的、有音乐性的旧数据**(最坏情况是"2 秒前那段又放了一遍"),而不是 16 ms 的机械循环。
+
+> `01:13:00` "you won't actually hear any objectionable things. It'll actually stay smooth and just sound like you were still playing from before until you come back."
+> `01:16:48`(有人质疑"放音乐时会听出来")"most people did not notice."
+
+⇒ **一句话:2 秒缓冲 = 减震器。它把"刺耳的爆音"换成"稍微陈旧一点的音频"。**
+
+### 6.6 "画面和声音对齐"那一段在讲什么
 
 - 第 N 帧的画面会被用户看 1/60 秒;这段时间里我们在算**下一帧**的画面**和它对应的那段声音**;
 - 理想状态:**把这段声音写进"和那次画面翻转(page flip)对齐的位置"**;
-- 但**做不到**:以前 page flip 在垂直同步(vblank)上,现在**时机不可预测**(N 家同步、深流水线等等);
-- 所以他的态度:`00:23:02` "it's just something to be aware of" —— 先记着,别追完美同步。
+- 但**做不到**:以前 page flip 在垂直同步(vblank)上,现在**时机不可预测**(Nvidia 那套同步/帧调度、很深的驱动流水线);
+- 而且**音频有它自己的时钟**,它不会等你的帧;
+- 所以他的态度:`00:23:02` "it's just something to be aware of" —— 先知道有这回事,不追完美同步。
 
-### 今天的实际目标
+### 6.7 对我们的游戏(类银河城)意味着什么
+
+音频属于**引擎层**,和游戏类型无关;但不同声音的**关注点不一样**:
+
+| 声音类别 | 对同步的要求 | 结论 |
+|---|---|---|
+| **音乐 / 环境音**(连续) | 不要求帧级同步,只要求**不断** | 大缓冲非常合适(掉帧时不刺耳) |
+| **音效**(跳跃 / 攻击 / 受击 / 开门) | 要求**输入 → 发声延迟低** | 靠"**写头领先量小**"来保证,而不是靠缩小缓冲长度 |
+
+所以他这套配置(**缓冲长、写头只领先一点**)恰好同时满足两头:抗卡顿 + 交互响应。
+**"缓冲长度"和"延迟"是两把旋钮,别拧混了** —— 这是这一节最值得记住的一句。
+
+### 6.8 今天的实际目标
 
 > `00:23:08` "just open a handle to DirectSound and get this buffer up… and have DirectSound just kind of do this infinite loop on it"
 
@@ -485,6 +583,6 @@ nAvgBytesPerSec = nSamplesPerSec × nBlockAlign
 | `VK_F4 = 0x73` | `um\winuser.h` |
 | `dsound.dll` 是否存在 | ✅ 本机 `Test-Path C:\Windows\System32\dsound.dll` = True |
 | `XInput1_4 / 1_3 / 9_1_0` 三个 DLL 都在 | ✅ 本机 `C:\Windows\System32\` 实测 |
-| **运算符优先级那个 bug** | ✅ 本机编译运行 `build\precedence_test.cpp`:他写的得到 `1`(错),正确写法得到 `0` |
+| **运算符优先级那个 bug** | ✅ 本机编译运行了一个 10 行的一次性实验(**源码见第三节**;按 `NOTES.md` §6.6,文件**用完已删**):他写的得到 `1`(错),正确写法得到 `0` |
 | **`C4554` 警告** | ✅ 同一次编译输出的原话:`warning C4554: "&": 检查运算符优先级是否存在的可能的错误` |
 | 时间戳引用 | 来自 `explain\!subtitle\[Mira] Handmade Hero Day 007 - Initializing DirectSound.txt`(⚠️ ASR 文本,数字/名字可能有误) |
