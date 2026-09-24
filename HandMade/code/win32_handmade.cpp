@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <xinput.h>//Xinput.h` 只有类型和声明,没有实现
+#include <dsound.h>//声音
 
 #define  local_persist static
 #define  global_variable static
@@ -47,6 +48,7 @@ struct win32_window_dimension
 };
 
 /*动态加载库*///**  Run-Time Dynamic Linking  **  运行时动态链接
+/*输入*/
 //NOTE: XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(_In_  DWORD  dwUserIndex,_Out_ XINPUT_STATE* pState)
 typedef X_INPUT_GET_STATE(x_input_get_state);
@@ -68,19 +70,34 @@ X_INPUT_SET_STATE(XInputSetStateStub)
 global_variable x_input_set_state* XInputSetState_=XInputSetStateStub;
 #define XInputSetState XInputSetState_
 
+/*声音*/
+//NOTE:DirectSoundCreate
+//extern _Check_return_ HRESULT WINAPI DirectSoundCreate(_In_opt_ LPCGUID pcGuidDevice, _Outptr_ LPDIRECTSOUND* ppDS, _Pre_null_ LPUNKNOWN pUnkOuter);
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(_In_opt_ LPCGUID pcGuidDevice, _Outptr_ LPDIRECTSOUND* ppDS, _Pre_null_ LPUNKNOWN pUnkOuter)
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
+
+/* 次缓冲:游戏主循环每帧都要往它里面写音频样本 ⇒ 必须是【全局】的。
+   它和 DirectSound 对象的区别:对象只在初始化里用,缓冲要在初始化【之外】被用到,
+   所以"谁活得更久"这件事是由"谁在后面还要用"决定的(同 XInputGetState_ 是全局的理由)。 */
+global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
+
+
+
 
 global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 global_variable bool Running;              // 是否在跑    
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 
-
+/*输入*/
 internal void 
 Win32LoadXinput()
 {
+    //HMODULE 就是 DLL 的基地址
 	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
-
-    if(!XInputLibrary) HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll");
-
+    if (!XInputLibrary) { 
+        //TODO:还要诊断一下，至少知道用的啥系统
+        XInputLibrary = LoadLibraryA("xinput1_3.dll"); 
+    }
     if (XInputLibrary)
     {
         XInputGetState = (x_input_get_state*)GetProcAddress(XInputLibrary,"XInputGetState");
@@ -89,12 +106,94 @@ Win32LoadXinput()
         XInputSetState = (x_input_set_state*)GetProcAddress(XInputLibrary,"XInputSetState");
         if (!XInputSetState) { XInputSetState = XInputSetStateStub; }
     }
+    else {
+        //TODO:日志记录错误
+    }
 }
-
+/*声音*/
 internal void
-Win32InitSound()
+Win32InitSound(HWND Window)
 {
+    /* 第 0 步:加载 dsound.dll(缺了只是没声音;故意不 FreeLibrary)。 */
+    HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+    if (DSoundLibrary)
+    {
+        /* 第 1 步:按名字取地址并强转;指针局部即可 —— 只调用一次。 */
+        direct_sound_create* DirectSoundCreate = (direct_sound_create*)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
 
+        /* 第 2 步:创建对象。参数 = 默认设备 / 输出参数 / pUnkOuter(必须 NULL);
+           返回 HRESULT ⇒ 用 SUCCEEDED;&& 保证空指针时不会调用。 */
+        LPDIRECTSOUND DirectSound = 0;
+        if (DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
+        {
+            /* 第 3 步:协作级别(创建后立刻调;要窗口句柄;PRIORITY 才能改主缓冲格式)。 */
+            HRESULT CooperativeResult = DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
+            if (SUCCEEDED(CooperativeResult))
+            {
+                //if ()
+                {
+
+                }
+            }
+
+            /* 格式与缓冲长度:放函数作用域,主缓冲和次缓冲都要用。 */
+            uint32 SamplesPerSecond = 48000;
+            uint32 SecondsToWrite   = 2;       /* 2 秒 = 抗卡顿的减震器 */
+
+            /* ⚠️ 先算 nBlockAlign 再算 nAvgBytesPerSec(结构体里顺序是反的,否则 E_INVALIDARG)。 */
+            WAVEFORMATEX WaveFormat = {};
+            WaveFormat.wFormatTag      = WAVE_FORMAT_PCM;   /* = 1 */
+            WaveFormat.nChannels       = 2;
+            WaveFormat.nSamplesPerSec  = SamplesPerSecond;
+            WaveFormat.wBitsPerSample  = 16;
+            WaveFormat.nBlockAlign     = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;   /* = 4 */
+            WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;       /* = 192000 */
+            WaveFormat.cbSize          = 0;
+
+            /* 第 4 步:主缓冲 —— 只是"改格式"的把手:PRIMARYBUFFER / 大小 0 / 格式 NULL。 */
+            DSBUFFERDESC PrimaryDesc = {};
+            PrimaryDesc.dwSize        = sizeof(PrimaryDesc);
+            PrimaryDesc.dwFlags       = DSBCAPS_PRIMARYBUFFER;
+            PrimaryDesc.dwBufferBytes = 0;
+            PrimaryDesc.lpwfxFormat   = 0;
+
+            LPDIRECTSOUNDBUFFER PrimaryBuffer = 0;
+            if (SUCCEEDED(DirectSound->CreateSoundBuffer(&PrimaryDesc, &PrimaryBuffer, 0)))
+            {
+                if (FAILED(PrimaryBuffer->SetFormat(&WaveFormat)))
+                {
+                    OutputDebugStringA("DirectSound: primary buffer SetFormat failed\n");
+                }
+            }
+            else
+            {
+                OutputDebugStringA("DirectSound: primary buffer creation failed\n");
+            }
+
+            /* 第 5 步:次缓冲 —— 真正写样本的内存,大小 = nAvgBytesPerSec × 秒数(≈384000 字节);
+               ⚠️ 输出到全局:每帧的 Lock/Unlock 在别的函数里。 */
+            DSBUFFERDESC SecondaryDesc = {};
+            SecondaryDesc.dwSize        = sizeof(SecondaryDesc);
+            SecondaryDesc.dwFlags       = 0;
+            SecondaryDesc.dwBufferBytes = WaveFormat.nAvgBytesPerSec * SecondsToWrite;
+            SecondaryDesc.lpwfxFormat   = &WaveFormat;
+
+            if (FAILED(DirectSound->CreateSoundBuffer(&SecondaryDesc, &GlobalSecondaryBuffer, 0)))
+            {
+                OutputDebugStringA("DirectSound: secondary buffer creation failed\n");
+            }
+
+            /* TODO(下一集):清零 → Play(0,0,DSBPLAY_LOOPING) → 每帧 GetCurrentPosition/Lock/Unlock。 */
+        }
+        else
+        {
+            OutputDebugStringA("DirectSound: DirectSoundCreate failed (no sound device?)\n");
+        }
+    }
+    else
+    {
+        OutputDebugStringA("DirectSound: dsound.dll not loaded - running without sound\n");
+    }
 }
 
 
@@ -414,7 +513,7 @@ WinMain(HINSTANCE hInstance,
 
 
             /*初始化音效*/
-            Win32InitSound();
+            Win32InitSound(Window);
 
 
 
@@ -501,6 +600,7 @@ WinMain(HINSTANCE hInstance,
 					}
 					else
 					{
+                        //TODO:日志系统记录错误
 						// Controller is not connected
 					}
 				}
