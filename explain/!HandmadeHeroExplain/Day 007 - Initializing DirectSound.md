@@ -586,3 +586,74 @@ nAvgBytesPerSec = nSamplesPerSec × nBlockAlign
 | **运算符优先级那个 bug** | ✅ 本机编译运行了一个 10 行的一次性实验(**源码见第三节**;按 `NOTES.md` §6.6,文件**用完已删**):他写的得到 `1`(错),正确写法得到 `0` |
 | **`C4554` 警告** | ✅ 同一次编译输出的原话:`warning C4554: "&": 检查运算符优先级是否存在的可能的错误` |
 | 时间戳引用 | 来自 `explain\!subtitle\[Mira] Handmade Hero Day 007 - Initializing DirectSound.txt`(⚠️ ASR 文本,数字/名字可能有误) |
+
+---
+
+## 附录 E:`.lib` 与 `.dll` 到底是什么关系(为什么我们用 `LoadLibrary` 而不是链库)
+
+> 起因:MS 的 [`DirectSoundCreate` 文档](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mt708921\(v=vs.85\)) 的 Requirements 只写了两行:
+> **Header: DSound.h** / **Library: Use Dsound.lib** —— **一个字都没提 `dsound.dll`**。
+> 那为什么我们的代码里是 `LoadLibraryA("dsound.dll")`?
+
+### E.1 `.lib` 是"导入库",它本身不是实现
+
+`.lib`(导入库 / import library)里**没有一行机器码**,只有一堆"桩":每个桩告诉链接器"这个符号的实现在某个 DLL 里"。
+✅ 实测(本机 SDK 10.0.19041.0 的 `x64\dsound.lib`,用 `dumpbin /headers`):
+
+```
+DLL name     : DSOUND.dll        ← 10 个成员全都指向它
+DLL name     : DSOUND.dll
+...
+```
+
+对照我们**已经**在链接的 `user32.lib`:
+
+```
+DLL name     : USER32.dll
+```
+
+所以文档说的"use Dsound.lib"和"加载 dsound.dll"**不是两件事**,而是同一条路的两种走法(老文档只写 `.lib` 那一半,DLL 名字是隐含的)。
+
+### E.2 两条路线
+
+| | **A. 载入期静态链接**(文档默认) | **B. 运行时动态链接**(Casey 选的、我们用的) |
+|---|---|---|
+| 做法 | 把 `dsound.lib` 加进链接命令行 | **不链 `.lib`**;`LoadLibraryA("dsound.dll")` + `GetProcAddress(..., "DirectSoundCreate")` |
+| 谁去加载 DLL | **Windows 加载器**,在**进程启动时** | **我们自己**,在需要的时候 |
+| DLL 缺失时 | **进程根本起不来**(加载器直接失败) | 游戏照常启动,**只是没声音**;还能打诊断、做降级 |
+| 函数地址 | 链接器写死在导入表里 | 运行时自己填进函数指针(所以必须**手动声明类型**,`GetProcAddress` 返回的是无类型指针) |
+| 编译器/链接器的帮助 | 有(写错函数名就链接失败) | **没有** —— 名字写错只有运行期才暴露(所以要 stub + 兜底) |
+
+**为什么选 B**:和 Day 006 对手柄的理由**完全一样** —— 手柄/声卡是**可选依赖**,缺了不该让整个游戏打不开。
+代价是我们要自己写 typedef、自己检查返回值(所以代码里才有 `direct_siund_create` 这种手写类型 —— ⚠️ 顺带:这个名字里的 `siund` 是笔误,应为 `sound`)。
+
+### E.3 怎么查"某个 API 到底在哪个 DLL 里"
+
+```bat
+:: 已知 .lib,查它背后是哪个 DLL
+dumpbin /headers "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.19041.0\um\x64\dsound.lib" | findstr /i "DLL name"
+:: 已知 .exe,查它启动了哪些 DLL(如果链了 dsound.lib,这里就会出现 DSOUND.dll)
+dumpbin /dependents HandMade\build\win32_handmade.exe
+```
+
+> 我们**故意**让 `dumpbin /dependents` 里**看不到** XInput 和 DSOUND —— 那正是"运行时动态加载"的证据。
+
+### E.4 顺带:XInput 那几个 DLL 的分工(同一天问到的)
+
+`XInputGetState` 有好几个 DLL 都能提供,**它们是同一个 API 的三代实现(替代品,不是互补件)**,所以代码只按优先级加载一个:
+
+| DLL | 文件版本(本机) | 来源 | `XInputGetState` | 特点 |
+|---|---|---|---|---|
+| `XInput1_4.dll` | 10.0.26100(系统自带) | Windows 8+ | ✅ 序号 6 | 功能最全(有 `XInputGetAudioDeviceIds`) |
+| `XInput1_3.dll` | 9.18.944(**DirectX SDK 时代**) | DirectX 运行库,**不是 Windows 自带** | ✅ 序号 6 | Win7 常见;有 `XInputGetDSoundAudioDeviceGuids` |
+| `XInput9_1_0.dll` | 10.0.26100(系统自带,36 KB) | 最老接口(🟡 现代系统上像兼容层) | ✅ 序号 **4** | **没有** `XInputGetKeystroke` / `XInputEnable` / 电量 |
+| `XInputUap.dll` | 10.0.26100.9549 | **UWP/打包应用**专用 | ✅ | 桌面 Win32 程序**不该**用它 |
+
+⇒ 加载顺序应是 **1_4 → 1_3 → 9_1_0 → 全失败退回 stub**;
+⇒ 序号不同(6 / 6 / 4)⇒ **只能按名字取**(`GetProcAddress(h, "XInputGetState")`),**绝不能按序号**。
+
+### E.5 一条写在文档里的话也值得记
+
+那份 `DirectSoundCreate` 页面开头就声明:**DirectSound 是 legacy 特性,已被 XAudio2 / Audio Graphs 取代**,微软"强烈建议"新代码不要用它。
+Casey 明知这一点仍然选 DirectSound,理由在 6.1 节:**要兼容老系统(他甚至想照顾 Windows XP)**。
+—— 这是"技术选型"的典型取舍:**更好的技术 ≠ 更适合当前目标的技术**,可以原样写进设计文档的技术选型论证里。
