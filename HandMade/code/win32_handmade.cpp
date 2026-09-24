@@ -53,8 +53,8 @@ typedef X_INPUT_GET_STATE(x_input_get_state);
 //typedef DWORD WINAPI x_input_get_state(_In_  DWORD  dwUserIndex,_Out_ XINPUT_STATE* pState)
 X_INPUT_GET_STATE(XInputGetStateStub)
 {
-    return 0;
-}//DWORD __stdcall XInputGetStateStub(DWORD dwUserIndex, XINPUT_STATE* pState) { return 0; }
+    return(ERROR_DEVICE_NOT_CONNECTED);//设备未连接
+}//DWORD __stdcall XInputGetStateStub(DWORD dwUserIndex, XINPUT_STATE* pState) { return ERROR_DEVICE_NOT_CONNECTED; }
 global_variable x_input_get_state* XInputGetState_=XInputGetStateStub;//_:动态加载
 #define XInputGetState XInputGetState_
 
@@ -63,7 +63,7 @@ global_variable x_input_get_state* XInputGetState_=XInputGetStateStub;//_:动态
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-    return 0;
+    return(ERROR_DEVICE_NOT_CONNECTED);
 }
 global_variable x_input_set_state* XInputSetState_=XInputSetStateStub;
 #define XInputSetState XInputSetState_
@@ -77,13 +77,26 @@ global_variable win32_offscreen_buffer GlobalBackBuffer;
 internal void 
 Win32LoadXinput()
 {
-    HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll");
+	HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
+
+    if(!XInputLibrary) HMODULE XInputLibrary = LoadLibraryA("xinput1_3.dll");
+
     if (XInputLibrary)
     {
         XInputGetState = (x_input_get_state*)GetProcAddress(XInputLibrary,"XInputGetState");
+        if (!XInputGetState) { XInputGetState = XInputGetStateStub; }
+
         XInputSetState = (x_input_set_state*)GetProcAddress(XInputLibrary,"XInputSetState");
+        if (!XInputSetState) { XInputSetState = XInputSetStateStub; }
     }
 }
+
+internal void
+Win32InitSound()
+{
+
+}
+
 
 internal win32_window_dimension
 Win32GetWindowDimension(HWND Window)
@@ -304,6 +317,11 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
                 {
                 }
             }
+			bool AltKeyWasDown = ((LParam & (1 << 29)) != 0);
+			if ((VKCode == VK_F4) && AltKeyWasDown)//ALT+F4关闭窗口
+			{
+				Running = false;
+			}
         }break;
 
         case WM_PAINT:                  //绘制
@@ -340,7 +358,12 @@ WinMain(HINSTANCE hInstance,
         LPSTR lpCmdLine,           
         int nShowCmd)             
 {
+
+
+    /*连接输入*/
     Win32LoadXinput();
+
+
 
     /* ① 窗口类登记表。= {0} 不能省:局部变量不清零就是栈上的垃圾值 */
     WNDCLASS WindowClass = {0};
@@ -387,6 +410,13 @@ WinMain(HINSTANCE hInstance,
                (Y 方向现在一直传 0;想让它也动起来,照 X 的样子 ++ 就行。) */
             int Xoffset = 0;
             int Yoffset = 0;
+
+
+
+            /*初始化音效*/
+            Win32InitSound();
+
+
 
 			MSG Message;                              // 装一条消息的盒子
             Running = true;
@@ -495,6 +525,9 @@ WinMain(HINSTANCE hInstance,
 
                 Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, &GlobalBackBuffer);
                 ReleaseDC(Window, DeviceContext);
+
+                Xoffset += 1;
+                Yoffset += 1;
 
             }
 		}
