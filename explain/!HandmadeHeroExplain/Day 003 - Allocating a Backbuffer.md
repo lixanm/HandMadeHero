@@ -2,7 +2,7 @@
 
 > **素材**:`C:\Users\thoth\Downloads\[Mira] Handmade Hero Day 003 - Allocating a Backbuffer.txt`
 > (3255 行字幕,约 1 小时;本文件按内容重排,不是逐句翻译)
-> **本文件**:`D:\HandMade\explain\.HandmadeHeroExplain\Day 003 - Allocating a Backbuffer.md`
+> **本文件**:`D:\HandMade\explain\!HandmadeHeroExplain\Day 003 - Allocating a Backbuffer.md`
 > **一句话总结**:**今天拿到了属于自己的那块像素内存** —— 从此渲染由我们自己写,Windows 只负责把它显示出来
 
 ---

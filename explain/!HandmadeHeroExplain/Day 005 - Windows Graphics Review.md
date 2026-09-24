@@ -1,8 +1,8 @@
 # Day 005 —— Windows Graphics Review(把这一周的图像代码从头过一遍)
 
-> **素材**:`D:\HandMade\explain\.subtitle\[Mira] Handmade Hero Day 005 - Windows Graphics Review.txt`
+> **素材**:`D:\HandMade\explain\!subtitle\[Mira] Handmade Hero Day 005 - Windows Graphics Review.txt`
 > (1118 条字幕,4471 行,约 **2 小时 07 分**;本文件按内容重排,不是逐句翻译)
-> **本文件**:`D:\HandMade\explain\.HandmadeHeroExplain\Day 005 - Windows Graphics Review.md`
+> **本文件**:`D:\HandMade\explain\!HandmadeHeroExplain\Day 005 - Windows Graphics Review.md`
 > **一句话总结**:**今天不写新功能,而是把"我们自己渲染 + 自己 blit"这条链整个拆开、洗干净、再逐行走一遍** ——
 > 全局变量收进结构体、后备缓冲改成固定 1280×720 并真正开始拉伸、在调试器里验证"栈向下增长、只有约 1 MB",
 > 外加一次**现场崩溃**(空指针写)和一堂**指针别名(aliasing)**课。

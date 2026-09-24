@@ -2,7 +2,7 @@
 
 > **素材**:`C:\Users\thoth\Downloads\[Mira] Handmade Hero Day 004 - Animating the Backbuffer.txt`
 > (3299 行字幕,约 1 小时;本文件按内容重排)
-> **本文件**:`D:\HandMade\explain\.HandmadeHeroExplain\Day 004 - Animating the Backbuffer.md`
+> **本文件**:`D:\HandMade\explain\!HandmadeHeroExplain\Day 004 - Animating the Backbuffer.md`
 > **一句话总结**:**我们自己写的像素第一次动起来了** —— 从此"渲染"完全归我们,Windows 只负责显示
 
 ---

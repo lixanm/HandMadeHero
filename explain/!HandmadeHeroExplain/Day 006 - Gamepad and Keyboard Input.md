@@ -1,8 +1,8 @@
 # Day 006 —— Gamepad and Keyboard Input(手柄与键盘输入)
 
-> **素材**:`D:\HandMade\explain\.subtitle\[Mira] Handmade Hero Day 006 - Gamepad and Keyboard Input.txt`
+> **素材**:`D:\HandMade\explain\!subtitle\[Mira] Handmade Hero Day 006 - Gamepad and Keyboard Input.txt`
 > (775 条字幕,3,099 行,约 **1 小时 32 分**;本文件按内容重排,不是逐句翻译)
-> **本文件**:`D:\HandMade\explain\.HandmadeHeroExplain\Day 006 - Gamepad and Keyboard Input.md`
+> **本文件**:`D:\HandMade\explain\!HandmadeHeroExplain\Day 006 - Gamepad and Keyboard Input.md`
 > **一句话总结**:**第一次真正拿到"人"的输入** —— 用 XInput 读手柄,而且为了"没有手柄也能玩",他
 > **自己 `LoadLibrary` + `GetProcAddress` 动态加载** `xinput1_3.dll`(不链接 `xinput.lib`);
 > 顺带把 `WM_KEYDOWN`/`WM_KEYUP` 里的 `WPARAM`/`LPARAM` 解密成可靠的布尔值。
@@ -488,3 +488,230 @@ if (WasDown != IsDown)   // 只有"状态真的变了"才处理
 | 本周剩余 | 声音;如果三天搞定,周五做**文件 IO** |
 | 之后 | "那就基本准备好**下下周开始做真正的游戏**了" |
 | 感恩节 | 周三 8pm 是本周最后一次;**周三四五改成上午 11:00** |
+
+---
+
+## 附录 D:打字过程中我问过的问题 + 答案(2026-09-23 ~ 09-24)
+
+> 这一节是**我照这一集打字时问 AI 的问题**,按提问顺序记。
+> 原始问答在会话里;这里是**结论 + 证据**,方便以后回查。凡标 🟡 的都是推断。
+
+### D.1 `typedef DWORD WINAPI x_input_get_state(...)` 是什么意思?
+
+**它定义的是"函数类型",不是函数、也不是变量** —— 一张"这种函数长什么样"的规格单:
+
+| 部分 | 含义 |
+|---|---|
+| `DWORD` | 返回类型 |
+| `WINAPI` | 调用约定 = `__stdcall`(参数怎么压栈、谁清栈、名字怎么修饰) |
+| `x_input_get_state` | **类型名**(不是函数名) |
+
+⭐ 所以下面必须写 `x_input_get_state *` 才是指针 —— **C 里"函数类型"和"函数指针类型"是两个东西**。
+
+- 它和第六节那个宏 `#define X_INPUT_GET_STATE(name) DWORD WINAPI name(...)` **完全等价**,宏只是省得把签名写两遍。
+- 和 SDK 头文件对照(`Xinput.h` 里是):
+  ```c
+  DWORD WINAPI XInputGetState(_In_ DWORD dwUserIndex, _Out_ XINPUT_STATE* pState) WIN_NOEXCEPT;
+  ```
+  我们只是**把函数名换成类型名**、去掉 `WIN_NOEXCEPT`。
+  🟡 `WIN_NOEXCEPT` 在 `winnt.h` 里是 `#define WIN_NOEXCEPT noexcept`,而 C++17 起 `noexcept` 属于**函数类型的一部分** ⇒ 严格说我们的类型和 SDK 的不完全相同。无害:我们只用它做 `GetProcAddress` 的强转、给自己 stub 赋值,从不混用。
+- `_In_` / `_Out_` 是 **SAL 注解**,**不生成任何代码**(给静态分析器看);`_Out_` 表示"函数往里写"。证据:`cl -E` 之后它们**整片消失**。
+
+### D.2 那两个 `global_variable x_input_get_state* ...;` 有什么用?
+
+**把"调用哪个函数"从编译期推迟到运行期。**
+
+| | 直接调 `XInputGetState` | 走我们自己的指针 |
+|---|---|---|
+| 链接期 | 必须有导入库,否则 `LNK2019`(我们卡在这里过) | 完全不提那个符号 |
+| 启动期 | Windows 要求 `xinput1_3.dll` 存在,否则程序**打不开** | 我们自己 `LoadLibraryA`;没有 DLL 就退回 stub |
+| 调用时 | 直接跳导入表 | 读指针里的地址,再跳过去 |
+
+一句话比喻:**typedef 是"函数形状的模具",两个 `global_variable` 是"两个可以插不同实现的插座"。**
+
+⚠️ 但光有这两行不够,还缺三样:① **填地址**(`LoadLibraryA` + `GetProcAddress`)② **先插 stub**(不填就调用 = 跳地址 0 崩)③ **调用点走插座**(或用 `#define` 重定向,见 D.3)。
+
+### D.3 宏那一段每一步到底干了什么?(预处理器证据)
+
+用 `cl -E` 导出的**真实展开**(不是回忆):
+
+| 源文件里写的 | 预处理之后 | 含义 |
+|---|---|---|
+| `typedef X_INPUT_GET_STATE(x_input_get_state);` | `typedef DWORD __stdcall x_input_get_state( DWORD dwUserIndex, XINPUT_STATE* pState);` | 造出**函数类型** |
+| `X_INPUT_GET_STATE(XInputGetStateStub) { ... }` | `DWORD __stdcall XInputGetStateStub(...) { ... }` | **定义一个真函数**(stub) |
+| `global_variable x_input_get_state* XInputGetState_ = XInputGetStateStub;` | `static x_input_get_state* XInputGetState_ = XInputGetStateStub;` | 全局函数指针,**初值指向 stub** |
+| `dwResult = XInputGetState(...);` | `dwResult = XInputGetState_(...);` | `#define` 把调用点**文本替换**成走指针 |
+
+三条副产品事实:`_In_`/`_Out_` **消失**;`WINAPI` → `__stdcall`;`global_variable` → `static`。
+📍 那次预处理的证据文件在 `HandMade\build\pp.i`(318,185 行;已删,想复现见下方命令)。
+
+⭐ 用宏的**真正理由**:同一个宏既生成 typedef、又生成 stub 的函数头 ⇒ **两处签名永远一致**。
+手写两份也能编过,但签名会漂移 —— 而 `GetProcAddress` 返回的是**无类型指针**,这类错**编译器不会替你发现**。
+
+⚠️ 当时发现一个真 bug:stub 写的是 `return 0;`,而 `winerror.h` 里 **`ERROR_SUCCESS = 0`**、`ERROR_DEVICE_NOT_CONNECTED = 1167`
+⇒ 调用点 `if (dwResult == ERROR_SUCCESS)` 会**永远成立**,程序认为"手柄永远插着"。**stub 应该说"我没有设备"。**
+
+```bat
+:: 复现宏展开(证据怎么做出来的)
+call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -no_logo
+cl -E -nologo -MTd -DHANDMADE_INTERNAL=1 -DHANDMADE_WIN32=1 code\win32_handmade.cpp > build\pp.i
+:: 然后在 pp.i 里搜 x_input_get_state / XInputGetState_
+```
+
+### D.4 这套技术叫什么?(想自己搜的话)
+
+| 层次 | 名字 |
+|---|---|
+| **机制** | **Run-Time Dynamic Linking**(运行时动态链接 / 显式链接);对照 **Load-Time Dynamic Linking**(隐式链接,靠 `.lib` 导入库) |
+| **技巧** | **Stub(桩函数)** + "function pointer initialized to a stub" |
+| **模式** | Function-pointer dispatch table / late binding / backend abstraction |
+| 跨平台对照 | POSIX 的 `dlopen` / `dlsym` |
+| 现实同款 | GLEW / glad(OpenGL 扩展加载)、`SDL_LoadObject`、Vulkan 的 `vkGetInstanceProcAddr` |
+| ⚠️ 别混淆 | **Delay Load**(`/DELAYLOAD`,链接器自动做)、trampoline / thunk / hook、**X-Macro** |
+
+**搜索词**:`run-time dynamic linking LoadLibrary GetProcAddress` / `explicit vs implicit linking DLL import library` /
+`function pointer dispatch table late binding` / `dlopen dlsym`。
+
+**Casey 自己的说法**(字幕是 ASR 文本,给行号/时间戳便于回查):
+
+| 时间 | 他说什么 |
+|---|---|
+| `00:28:48` | "…want to actually do an XInputGetState **stub**" |
+| `00:30:37` | "a good way to **initialize your function pointers to just point at a stub**" |
+| `01:02:41` | "Define the stubs by using the macro just works really well" |
+| `01:24:21` | "import library approach … rather than **true dynamic loading**" |
+
+### D.5 `WPARAM` 和 `LPARAM` 有什么区别?
+
+**名字是历史残留**:W = Word(16 位)、L = Long(32 位)、PARAM = 参数 ⇒ **Win16 时两者尺寸真的不同**;
+Win32 都变 32 位、Win64 都变 64 位 —— **今天尺寸一样**。
+
+真实定义(从 SDK 头文件里挖的):
+
+```c
+minwindef.h:186   typedef UINT_PTR   WPARAM;   /* basetsd.h: unsigned __int64(x64) */
+minwindef.h:187   typedef LONG_PTR   LPARAM;   /* basetsd.h: __int64(x64)          */
+```
+
+⇒ **今天唯一剩下的实质差别:一个无符号、一个有符号。其余全靠"每条消息自己规定"。**
+
+| 消息 | WPARAM | LPARAM |
+|---|---|---|
+| `WM_KEYDOWN`/`WM_KEYUP` | **虚拟键码** | **位域**:bit0-15 重复次数、16-23 扫描码、24 扩展键、29 Alt、**30 之前是否按下**、**31 转换位** |
+| `WM_SIZE` | `SIZE_*` 标志 | `LOWORD` = 宽、`HIWORD` = 高 |
+| `WM_MOUSEMOVE` | `MK_*` 按键状态 | `LOWORD` = x、`HIWORD` = y(**有符号**) |
+| `WM_COMMAND` | `LOWORD` = 控件 id、`HIWORD` = 通知码 | 子窗口 `HWND` |
+| `WM_PAINT` / `WM_CLOSE` / `WM_DESTROY` | 都不用 | 都不用 |
+
+> 📖 历史习惯:**大东西(指针、句柄)走 LPARAM** —— Win16 的 32 位远指针塞不进 16 位的 WPARAM。
+> 所以 `WM_COMMAND` 把 `HWND` 放在 LPARAM 里,这个习惯活到今天。
+
+**我们踩的两个坑(都是 `-W4 -WX` 下直接编不过)**:
+
+| 写法 | 报什么 | 为什么 |
+|---|---|---|
+| `uint32 VKCode = WParam;` | **C4244**(可能丢失数据)→ C2220(警告视为错误) | x64 下 WPARAM 是 64 位 ⇒ 要写 `(uint32)WParam` |
+| `VKCode == "W"` | **C2446 / C4130** | `"W"` 是**字符串字面量**(类型 `const char[2]`,一个地址);`'W'` 才是**整数 87** |
+
+### D.6 为什么键盘和手柄要分开处理?
+
+**不是 Casey 的选择,是 API 现实。**
+
+| | 键盘 | 手柄 |
+|---|---|---|
+| 模型 | **消息驱动**(系统推给你) | **轮询**(你去拉) |
+| 有没有焦点概念 | **有**(没焦点收不到) | **没有**(窗口在后台也读得到) |
+| 有没有消息 | `WM_KEYDOWN` / `WM_KEYUP` 等 | **根本没有** —— XInput 不在窗口系统里 |
+
+Casey 原话(字幕第 **155** 行):"the XInput is a **polling based API** which basically means that it only gives us back the state…"
+
+**更本质的差别:边沿 vs 电平**
+- 消息自带**边沿**:`LPARAM` 的 bit30/31 直接告诉你"这是刚按下、还是按住重复" ⇒ **不用记上一帧**;
+- 轮询只有**电平**(每帧一张快照)。要"这一帧刚按下"的语义 ⇒ **必须自己保存上一帧做比较**。
+
+**为什么不干脆也轮询键盘**(`GetAsyncKeyState`):
+① 会**丢事件**(两帧之间"按下又抬起"根本看不到);② 拿不到重复次数/扫描码那套位域;
+🟡 ③ 还有一条"它读全局键状态、不看焦点"——这条我**没现查文档**。
+
+**最终是要合起来的**:平台层吸收差异 ⇒ 归一成 `game_input`(键盘被当成"controller 0"),游戏层只问"这个按钮这一帧按下没有"。
+🟡 那是系列后面几集的做法;本集只是把两边**各自**打通。
+
+📍 在我们代码里:键盘在**窗口过程**(`WindowMainWindowCallback`),手柄在**主循环**、`PeekMessage` 排空之后、渲染之前。
+
+### D.7 手柄也有"VKCode",为什么不直接合并?
+
+手柄**没有** `VKCode`。两边只是"看着都是常量",形态完全不同:
+
+| | 键盘 | 手柄 |
+|---|---|---|
+| 常量 | `VK_*` | `XINPUT_GAMEPAD_*` |
+| 形态 | **互斥编号**(一次事件 = 一个键) | **位掩码**(一次给你十六个键的状态) |
+| 有没有"是谁的" | 没有(键盘只有一块) | **有**(`XUSER_MAX_COUNT` = 4 个槽) |
+| 有没有连续量 | 没有 | **有**:摇杆 `-32768~32767`、扳机 `0~255` |
+
+**直接合并会撞车**(头文件实测):
+
+| 手柄 | 键盘 |
+|---|---|
+| `XINPUT_GAMEPAD_DPAD_UP` = `0x0001` | `VK_LBUTTON`(鼠标左键)= `0x01` |
+| `XINPUT_GAMEPAD_DPAD_DOWN` = `0x0002` | `VK_RBUTTON`(鼠标右键)= `0x02` |
+
+`VK_*` 空间里 `0x01~0x06` 已被鼠标键占用,而手柄的 dpad / start / 摇杆按下正好落在 `0x0001~0x0080` 区间 ⇒ **一套编号放不下两套语义**。
+
+**正确做法:在"动作语义"层合并,不在"设备码"层合并。** `VK_*` 和 `XINPUT_GAMEPAD_*` 只活在**平台层**,一步都不外传。
+
+### D.8 `inline`(内联)是什么?
+
+**把函数的代码直接塞进调用点**,省掉 `call`/`ret` 和参数搬运,并让编译器看到更多上下文。
+
+⚠️ **两个"inline"别搞混**:
+- **内联展开** = 一项**编译器优化**,由优化等级和它的成本模型决定;
+- **`inline` 关键字** = **链接规则**(允许同一份定义出现在多个 `.cpp`/头文件而不违反 ODR),对"是否真的内联"**只是提示**。
+
+⇒ "写 `inline` 就会变快"是**误解**。MSVC 另有 `__forceinline` / `__declspec(noinline)`,开关是 `/Ob0 /Ob1 /Ob2`(`/Od` 隐含 `/Ob0`)。
+
+**实测(本机 + 我们的参数)**,一个按值收结构体、被调用三次的例子:
+
+| 优化等级 | `Caller` 里实际看到什么 |
+|---|---|
+| **`-Od`**(我们 `build.bat` 用的) | **三次 `rep movsb`(每次 40 字节)+ 三次 `call`** —— **连 `__forceinline` 都没被内联** |
+| `-O2` | **一个 `call` 都没有、一个 `rep movsb` 都没有** —— 全内联,连"拷贝"这个动作都消失了 |
+
+⇒ 这正好解释 Casey 为什么撤销"按值传"(第九节):**那是在赌优化器会内联**。
+而我们用 `-Od` ⇒ 按值传 100% 是真拷贝,现在纠结这个**只有语义意义、没有性能意义**。
+
+**代价**:代码膨胀(i-cache)、调试时栈里**看不到被内联的那一帧**。
+
+### D.9 顺带问到的:引擎分几层?什么时候能导入 3D 模型?
+
+- **Casey 只切两刀**:平台层(只有它能碰操作系统)vs 游戏层(不知道 Win32 存在),中间靠**函数表 + 几个结构**通信。
+- 工业界常见分层(从下往上):平台/OS 抽象 → 核心(内存/数学/容器) → 输入 → 音频 → 渲染 → 资源 → 网络 → 动画 → 物理 → 表现 → 世界/场景 → 玩法 → 工具。
+- ⚠️ **"导入 3D 模型"不是 Handmade Hero 的里程碑**:它**不做**通用模型导入(没有 FBX/OBJ/glTF 解析),
+  资产是它自己的 **HHA/HHT** 格式,几何最多做到**立方体 UV**。
+- 3D 相关的最早集数(🟡 来自 `explain\HANDMADE_HERO_终点与导航.md`,那份文档自认是推断):
+  **071–111** 3D 化 + 透视投影;**112–131** SIMD 光栅化;**331–378** 深度缓冲 / 3D 旋转矩阵;**470–545** 立方体 UV。
+
+> ⚠️ **而且我们的游戏是类银河城,不是他的地牢**(2026-09-24 定的事):
+> **引擎层跟着学;玩法、关卡与地图结构、能力解锁与回溯、存档点、Boss —— 自己设计。**
+> 别把 HH 后期的地牢生成、体积光照、Brains 当成"我们也要做"。详见 `README.md` 开头与 `NOTES.md` 的"项目定位"。
+
+### D.10 这一节之后,代码的实际状态(2026-09-24)
+
+上面这些结论**都落到代码里了**,所以**第 11 节那几处"我们还没有"已经过时**:
+
+| 项 | 状态 |
+|---|---|
+| `#include <xinput.h>`、宏 + typedef + stub + 函数指针 + `#define` | ✅ |
+| `Win32LoadXinput()`(`LoadLibraryA` + `GetProcAddress`) | ✅ |
+| **键盘**:四个 case 标签共用一块、键位判断挪进 `if (WasDown != IsDown)`、每个键打印 | ✅ |
+| `build.bat` | ✅ `[build] OK`(0 error 0 warning) |
+| stub 的 `return 0`(应是 `ERROR_DEVICE_NOT_CONNECTED`) | ❌ 还没改(见 D.3 末尾) |
+| `Win32LoadXinput()` 取不到导出函数时**退回 stub**的兜底 | ❌ 还没加 |
+
+**键盘是怎么验证的**(不是"编过就算"):
+挂到 `cdb` 里跑(它会把 `OutputDebugStringA` 打到控制台)⇒ 抓到 `W` / `A` / `Escape was down`;
+再**伪造一条"重复"消息**(bit30=1、bit31=0)⇒ **没有任何输出** ⇒ **重复过滤真的生效**;
+另外启动日志里的 `ModLoad: C:\WINDOWS\SYSTEM32\xinput1_3.dll` 顺带证明**动态加载成功**(DLL 是运行时加载的,不是链接进来的)。
+
+> ⚠️ 补一句:那次验证里,"伪造消息"是 `PostMessage` 直接投递的 —— 它绕过系统输入队列,但走的是**同一个窗口过程**,
+> 所以能证明处理逻辑;真实按键那条路径另外用 `keybd_event` 单独验过。
