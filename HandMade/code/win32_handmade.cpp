@@ -82,6 +82,10 @@ typedef DIRECT_SOUND_CREATE(direct_sound_create);
 global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 
 
+global_variable int    BytesPerSample = sizeof(int16) * 2;  /* 16 位 × 2 声道 = 4 字节/采样帧 */
+global_variable uint32 RunningSampleIndex = 0;              /* ★ 必须全局:永远递增,跨帧不归零 */
+global_variable int16  ToneVolume = 3000;                   /* 音量(相对 32767 很小,不刺耳) */
+global_variable int    SecondaryBufferSize;                 /* ★ 必须 == 创建次缓冲时的 dwBufferBytes */
 
 
 global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
@@ -112,78 +116,93 @@ Win32LoadXinput()
 }
 /*声音*/
 internal void
-Win32InitSound(HWND Window)
+Win32InitSound(HWND Window,int32 BufferSize)
 {
-    /* 第 0 步:加载 dsound.dll(缺了只是没声音;故意不 FreeLibrary)。 */
-    HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+    /*加载 dsound.dll(缺了只是没声音;故意不 FreeLibrary)。 */
+    HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");//DLL文件基地址
     if (DSoundLibrary)
     {
-        /* 第 1 步:按名字取地址并强转;指针局部即可 —— 只调用一次。 */
+        //从指定的动态链接库 (DLL) 中检索导出的函数（也称为过程）或变量的地址。
         direct_sound_create* DirectSoundCreate = (direct_sound_create*)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
 
-        /* 第 2 步:创建对象。参数 = 默认设备 / 输出参数 / pUnkOuter(必须 NULL);
-           返回 HRESULT ⇒ 用 SUCCEEDED;&& 保证空指针时不会调用。 */
-        LPDIRECTSOUND DirectSound = 0;
+           //返回 HRESULT ⇒ 用 SUCCEEDED;&& 保证空指针时不会调用。 */
+        LPDIRECTSOUND DirectSound = 0;//指向响应此函数而创建的 DirectSound 对象的指针的地址。
         if (DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
+            //当我们拿回指向 DirectSound 的句柄时，DirectSound 拥有一个指向 DirectSound DLL内部虚表的指针
         {
-            /* 第 3 步:协作级别(创建后立刻调;要窗口句柄;PRIORITY 才能改主缓冲格式)。 */
-            HRESULT CooperativeResult = DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
-            if (SUCCEEDED(CooperativeResult))
-            {
-                //if ()
-                {
 
-                }
+
+			/* 格式与缓冲长度:放函数作用域,主缓冲和次缓冲都要用。 */
+			uint32 SamplesPerSecond = 48000;
+			uint32 SecondsToWrite = 2;       /* 2 秒 = 抗卡顿的减震器 */
+
+
+			/* ⚠️ 先算 nBlockAlign 再算 nAvgBytesPerSec(结构体里顺序是反的,否则 E_INVALIDARG)。 */
+			//WAVEFORMATEX 结构定义了波形音频数据的格式。
+			WAVEFORMATEX WaveFormat = {};
+			WaveFormat.wFormatTag = WAVE_FORMAT_PCM;   /* = 1 */ //波形音频格式类型。
+			WaveFormat.nChannels = 2; //波形音频数据中的声道数。单声道数据使用一个声道，立体声数据使用两个声道。
+			WaveFormat.nSamplesPerSec = SamplesPerSecond;//每秒采样数
+			WaveFormat.wBitsPerSample = 16;//wFormatTag 格式类型的每个样本的位数。
+			//块对齐，以字节为单位。块对齐是 wFormatTag 格式类型的最小数据原子单元。
+			WaveFormat.nBlockAlign = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;   /* = 4 */
+			//格式标签所需的平均数据传输速率（以字节 / 秒为单位）。
+			WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;       /* = 192000 */
+			WaveFormat.cbSize = 0;
+
+
+            //HRESULT 是一种用于 Windows 编程的 32 位整数数据类型，用于报告函数或方法的完成状态或错误代码
+            HRESULT Error = DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY);
+             //SetCooperativeLevel 是 DirectSound 内部虚表的一个虚函数
+            if (SUCCEEDED(Error))//返回DD_OK
+            {
+
+
+                //**  主缓冲  只是拿到"声卡"的句柄  **  调 `SetFormat` 告诉 Windows"按这个格式播"
+                DSBUFFERDESC BufferDescription = {};//DS缓冲区
+                BufferDescription.dwSize = sizeof(BufferDescription);//结构体大小
+                BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;//区分主次缓冲区
+                BufferDescription.dwBufferBytes = 0;//字节大小
+                BufferDescription.lpwfxFormat = 0;
+                //指定缓冲区波形格式的 WAVEFORMATEX 或 WAVEFORMATEXTENSIBLE 结构的地址。对于主缓冲区，此值必须为 NULL。
+
+				LPDIRECTSOUNDBUFFER PrimaryBuffer = 0;//接收新缓冲区对象 IDirectSoundBuffer 接口的变量地址
+                Error = DirectSound->CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0);
+				if (SUCCEEDED(Error))
+				{
+
+					if (SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))//设置流中的格式信息
+					{
+
+					}
+                    else {
+						OutputDebugStringA("DirectSound: primary buffer SetFormat failed\n");
+                    }
+				}
+				else{
+					OutputDebugStringA("DirectSound: primary buffer creation failed\n");
+				}
+
             }
 
-            /* 格式与缓冲长度:放函数作用域,主缓冲和次缓冲都要用。 */
-            uint32 SamplesPerSecond = 48000;
-            uint32 SecondsToWrite   = 2;       /* 2 秒 = 抗卡顿的减震器 */
 
-            /* ⚠️ 先算 nBlockAlign 再算 nAvgBytesPerSec(结构体里顺序是反的,否则 E_INVALIDARG)。 */
-            WAVEFORMATEX WaveFormat = {};
-            WaveFormat.wFormatTag      = WAVE_FORMAT_PCM;   /* = 1 */
-            WaveFormat.nChannels       = 2;
-            WaveFormat.nSamplesPerSec  = SamplesPerSecond;
-            WaveFormat.wBitsPerSample  = 16;
-            WaveFormat.nBlockAlign     = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;   /* = 4 */
-            WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;       /* = 192000 */
-            WaveFormat.cbSize          = 0;
-
-            /* 第 4 步:主缓冲 —— 只是"改格式"的把手:PRIMARYBUFFER / 大小 0 / 格式 NULL。 */
-            DSBUFFERDESC PrimaryDesc = {};
-            PrimaryDesc.dwSize        = sizeof(PrimaryDesc);
-            PrimaryDesc.dwFlags       = DSBCAPS_PRIMARYBUFFER;
-            PrimaryDesc.dwBufferBytes = 0;
-            PrimaryDesc.lpwfxFormat   = 0;
-
-            LPDIRECTSOUNDBUFFER PrimaryBuffer = 0;
-            if (SUCCEEDED(DirectSound->CreateSoundBuffer(&PrimaryDesc, &PrimaryBuffer, 0)))
-            {
-                if (FAILED(PrimaryBuffer->SetFormat(&WaveFormat)))
-                {
-                    OutputDebugStringA("DirectSound: primary buffer SetFormat failed\n");
-                }
-            }
-            else
-            {
-                OutputDebugStringA("DirectSound: primary buffer creation failed\n");
-            }
-
-            /* 第 5 步:次缓冲 —— 真正写样本的内存,大小 = nAvgBytesPerSec × 秒数(≈384000 字节);
-               ⚠️ 输出到全局:每帧的 Lock/Unlock 在别的函数里。 */
+            /* 次缓冲 —— 真正写样本的内存
+                           ⚠️ 输出到全局:每帧的 Lock/Unlock 在别的函数里。 */
             DSBUFFERDESC SecondaryDesc = {};
-            SecondaryDesc.dwSize        = sizeof(SecondaryDesc);
-            SecondaryDesc.dwFlags       = 0;
-            SecondaryDesc.dwBufferBytes = WaveFormat.nAvgBytesPerSec * SecondsToWrite;
-            SecondaryDesc.lpwfxFormat   = &WaveFormat;
+            SecondaryDesc.dwSize = sizeof(SecondaryDesc);
+            SecondaryDesc.dwFlags = 0;
+            SecondaryDesc.dwBufferBytes = BufferSize;
+            SecondaryDesc.lpwfxFormat = &WaveFormat;
 
-            if (FAILED(DirectSound->CreateSoundBuffer(&SecondaryDesc, &GlobalSecondaryBuffer, 0)))
+            Error = DirectSound->CreateSoundBuffer(&SecondaryDesc, &GlobalSecondaryBuffer, 0);
+            if (SUCCEEDED(Error))
             {
+                //次缓冲不用设置格式信息，直接传入缓冲区
+
+            }
+            else {
                 OutputDebugStringA("DirectSound: secondary buffer creation failed\n");
             }
-
-            /* TODO(下一集):清零 → Play(0,0,DSBPLAY_LOOPING) → 每帧 GetCurrentPosition/Lock/Unlock。 */
         }
         else
         {
@@ -279,9 +298,12 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer,int Width, int Height)//想
 
     /* ★ 自己分配内存:每像素 4 字节(32bpp),所以需要 宽 * 高 * 4 字节。
        VirtualAlloc 是按页(4096 字节)给的,所以实际拿到的会比要的多一点,无所谓。
-       MEM_COMMIT = 真的要这块内存(而不是只占地址范围);PAGE_READWRITE = 可读可写。 */
+       MEM_COMMIT = 真的要这块内存(而不是只占地址范围); 
+       MEM_RESERVE:保留进程虚拟地址空间的一部分，而不在内存或磁盘上的分页文件中分配任何实际的物理存储空间。
+       PAGE_READWRITE = 可读可写。 */
     int BitmapMemorySize = Buffer->Width * Buffer->Height * BytesPerPixel;
-    Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+	Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);//明确需要保留和提交内存，而不是仅仅保留
+
 
     //TODO:
 
@@ -436,8 +458,9 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
                Win32UpdateWindow 现在还多要一个"客户区矩形",用来知道窗口有多大 —— 现取一个给它。 */
             
             win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-
             Win32DisplayBufferInWindow(DeviceContext, Dimension.Width,Dimension.Height, &GlobalBackBuffer);
+
+
 			EndPaint(Window, &Paint);
         }break;
 
@@ -512,8 +535,15 @@ WinMain(HINSTANCE hInstance,
 
 
 
-            /*初始化音效*/
-            Win32InitSound(Window);
+            int SamplesPerSecond = 48000;
+            int Hz = 256;
+			//int SquareWaveCount = 0;//方波计数器
+			int SquareWavePeriod = SamplesPerSecond / Hz;        /* 187 */
+			int HalfSquareWavePeriod = SquareWavePeriod / 2;     /* 93 ← 新增,写方波要用 */
+
+			SecondaryBufferSize = SamplesPerSecond * BytesPerSample * 2;   /* 2 秒 = 384000 字节 */
+			Win32InitSound(Window, SecondaryBufferSize);                   /* ← 传的是同一个值 */
+
 
 
 
@@ -616,18 +646,91 @@ WinMain(HINSTANCE hInstance,
                 /* —— ② 渲染:往我们自己的那块内存里写像素(此时屏幕上还看不到) —— */
                 RenderWeirdGradient(&GlobalBackBuffer,Xoffset, Yoffset);
 
+
+
+                //音效输出
+				/* Lock 之前,先把这几样准备好 */
+				DWORD PlayCursor;                     // GetCurrentPosition 的输出①
+				DWORD WriteCursor;                    // 输出②(我们其实不用,但 API 要求给个地方放)
+				DWORD ByteToLock;                     // ← 第 1 个参数
+				DWORD BytesToWrite;                   // ← 第 2 个参数
+				VOID* Region1;  DWORD Region1Size;    // ← 第 3、4 个参数
+				VOID* Region2;  DWORD Region2Size;    // ← 第 5、6 个参数
+
+				HRESULT LockResult = GlobalSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor);
+				if (SUCCEEDED(LockResult))
+				{
+					/* ByteToLock / BytesToWrite 的算法 */
+                    /* —— (1) 这次从哪个字节开始写 ——
+   RunningSampleIndex 是【永远递增】的采样帧序号(全局,跨帧不归零),
+   乘以"每个采样帧多少字节" = "已经写过多少字节",再 % 缓冲大小 ⇒ 折回环形缓冲的位置。 */
+                    ByteToLock = (RunningSampleIndex * BytesPerSample) % SecondaryBufferSize;
+
+                    /* —— (2) 这次要写多少字节:一直写到 play cursor 之前为止 —— */
+                    if (ByteToLock > PlayCursor)
+                    {
+                        /* 我落在播放头【后面】:先写到缓冲末尾,再绕回头写到播放头 */
+                        BytesToWrite = (SecondaryBufferSize - ByteToLock);
+                        BytesToWrite += PlayCursor;
+                    }
+                    else if (ByteToLock == PlayCursor)
+                    {
+                        /* 特例:只有刚启动时两个游标才会相等(都是 0),
+                           这时上面两条算出来都是 0 = 什么都不写 ⇒ 直接填满整个缓冲 */
+                        BytesToWrite = SecondaryBufferSize;
+                    }
+                    else
+                    {
+                        /* 播放头在我前面:一段直写,不跨末尾 */
+                        BytesToWrite = PlayCursor - ByteToLock;
+                    }
+
+						if (SUCCEEDED(GlobalSecondaryBuffer -> Lock(ByteToLock, BytesToWrite,
+							                                        &Region1, &Region1Size,
+							                                        &Region2, &Region2Size,
+							                                        0)))          // ← dwFlags = 0
+						{
+							/* 往 Region1(+Region2)里写方波样本 */
+                            /* —— (3) 写第一段 —— */
+                            int16* SampleOut = (int16*)Region1;
+                            DWORD Region1SampleCount = Region1Size / BytesPerSample;
+                            for (DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; ++SampleIndex)
+                            {
+                                /* 方波:每 HalfSquareWavePeriod 个采样翻转一次符号 */
+                                int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2)
+                                    ? ToneVolume : -ToneVolume;
+                                *SampleOut++ = SampleValue;   /* 左声道 */
+                                *SampleOut++ = SampleValue;   /* 右声道 —— 同值 = 单声道听感 */
+                            }
+
+                            /* —— (4) 写第二段:只有"跨过缓冲末尾"时才有第二块;
+                                   没跨时 Region2 是 NULL / Region2Size 是 0,这个循环体一次都不会进 —— */
+                            int16* SampleOut2 = (int16*)Region2;
+                            DWORD Region2SampleCount = Region2Size / BytesPerSample;
+                            for (DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; ++SampleIndex)
+                            {
+                                int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2)
+                                    ? ToneVolume : -ToneVolume;
+                                *SampleOut2++ = SampleValue;  /* 左声道 */
+                                *SampleOut2++ = SampleValue;  /* 右声道 */
+                            }
+
+
+							GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+						}
+				}
+
+
                 /* —— ③ 贴图:⚠️ 这一步不能少!只渲染不 blit,屏幕上什么都不会变
                        —— 这也是 Casey 在 Day 4 现场犯的第二个错。
                        GetDC 是"借"、ReleaseDC 是"还",必须成对出现。 —— */
                 HDC DeviceContext = GetDC(Window);
 
                 win32_window_dimension Dim = Win32GetWindowDimension(Window);
-
                 Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, &GlobalBackBuffer);
+
                 ReleaseDC(Window, DeviceContext);
 
-                Xoffset += 1;
-                Yoffset += 1;
 
             }
 		}
