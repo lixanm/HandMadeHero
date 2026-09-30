@@ -10,7 +10,7 @@
 > **我要做的是类银河城（Metroidvania）**。
 > 所以：**引擎层跟着学**；**玩法、关卡与地图结构、能力解锁与回溯设计，按类银河城自己来做**。
 
-> **手敲是重点**：代码的价值在于"是我自己一行一行打出来的"，所以仓库里的 AI 助手默认只读、动代码前必须先说清楚计划（见 [`NOTES.md`](NOTES.md)）。
+> **AI 可以直接写代码**(2026-09-30 起):原来「代码必须手敲、AI 默认只读」的约束已取消(见 [`.agents/adr/0007`](.agents/adr/0007-ai-writes-code.md));保留的是「**说清楚 + 留退路**」(`NOTES.md` §1)。学习目标不变,只是打字不再由一个人扛。
 > 文件是 `.cpp`，但**按 C 风格写**（Casey 的写法）：不用类、不用 STL、不用异常和 RTTI（`-GR- -EHa-` 就是把它们关掉）。
 
 ---
@@ -62,7 +62,7 @@
 
 ```
 HandMade.sln                        解决方案（VS2022）
-NOTES.md                            工作约定：AI 助手的默认行为（只读 / 先交底 / 不擅自提交）
+NOTES.md                            工作约定：AI 的行为分档（直接做 / 先说再做 / 必须等批准）
 GLOSSARY.md                         词汇表（只放最容易各写各的那几个词；完整译名以术语表为准）
 .dsh/skills/                        给 AI 的技能（会自动加载：盘问 / 调试循环 / 写文档判据）
 .agents/adr/                        关键决策记录（决定了什么、为什么、代价是什么）
@@ -209,4 +209,4 @@ HandMade\debug.bat
 - [Windows API index（官方文档）](https://learn.microsoft.com/en-us/windows/win32/apiindex/windows-api-list)
 - 查 API 的心得：**文档看用途，头文件看签名** —— 在 VS 里对任何 API 名字按 **F12** 跳到 `winuser.h`/`wingdi.h`，那才是权威
   （微软文档出过错，比如 `WinMain` 的签名块至今写着 C++/CLI 的 `__clrcall`）
-- 本仓库里的 AI 工作约定见 [`NOTES.md`](NOTES.md)：默认只读、动手前先交底、不知道就说不知道
+- 本仓库里的 AI 工作约定见 [`NOTES.md`](NOTES.md)：代码可以直接改（先说一句）、不擅自提交、不知道就说不知道
