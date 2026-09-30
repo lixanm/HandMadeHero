@@ -491,7 +491,7 @@ About / **Keyboard Shortcuts**(弹出快捷键表)/ **Documentation**(官方文�
 
 ---
 
-## 9. 编辑器插件(含 Emacs!)📖
+## 9. 编辑器插件 📖
 
 Sourcetrail 可以和编辑器**双向联动**(通过本地 TCP:**Sourcetrail 监听 6667,发往 6666**)。
 
@@ -501,16 +501,14 @@ Sourcetrail 可以和编辑器**双向联动**(通过本地 TCP:**Sourcetrail �
 
 ### 9.2 从编辑器 → Sourcetrail
 
-**Emacs**(⭐ 你就在用 Emacs):
+**Visual Studio 2022（你现在用的）**：
 
-| 步骤 | 做法 |
-|---|---|
-| 安装(手动) | 下载 [`sourcetrail.el`](https://github.com/CoatiSoftware/emacs-sourcetrail) → Emacs 里 `M-x package-install-file` → 填文件路径 |
-| 安装(Melpa) | 加 Melpa 源 → `M-x list-packages` → 找 `sourcetrail` → `i` 标记 → `x` 安装 |
-| **发送位置** | 光标放到符号上 → **`M-x sourcetrail-send-location`** |
-| **接收位置** | 先启动 **`M-x sourcetrail-mode`**(这样 Sourcetrail 点行时才会跳过来) |
+Sourcetrail 的官方插件清单里，**Visual Studio 只覆盖 2012–2017，没有 2022 版**
+⇒ 现在**"VS → Sourcetrail"的联动用不了**；反方向的"Sourcetrail → 编辑器"也因为 VS 里没有插件接收而用不了。
 
-> ⚠️ 官方说插件在**下载包的 `/ide_plugins` 目录**里。本机是 `setup.exe` 装的,**没有那个目录**,所以要用上面 GitHub 的地址取。
+实际能用的方式是**两边各看各的**：Sourcetrail 里看调用图 / 被调用者 / 引用关系，VS2022 里改代码（`F12` 跳定义、`F7` 编译）。
+
+> 🟡 **不确定**：上面是照官方插件清单推断的（清单见本节末尾链接），我没有实际试过把那个 2017 插件装到 VS2022 上能不能生效。
 
 **其它编辑器**(同一个仓库组织下):Atom、CLion/IntelliJ IDEA、Eclipse、Qt Creator、Sublime Text 2/3、Vim(`:SourcetrailActivateToken`)、VS Code(`Sourcetrail: Send Location`)、Visual Studio(2012–2017)。
 
@@ -539,7 +537,7 @@ Visual Studio 插件里有个向导(在 VS 菜单栏的 Sourcetrail 区):勾选�
 | 文件 | 内容 | 建议 |
 |---|---|---|
 | `HandMade.srctrlprj` | XML,`<version>8</version>`,源组配置 | ✅ **提交** |
-| `compile_commands.json` | 编译数据库(clang 格式) | ✅ **提交**(它同时还能给 clangd / VS Code / Emacs 用) |
+| `compile_commands.json` | 编译数据库(clang 格式) | ✅ **提交**(它同时还能给 clangd / VS Code 用) |
 | `HandMade.srctrldb` | SQLite 索引库 | ❌ **加进 `.gitignore`**(可重建,而且会很大) |
 | `HandMade.srctrlbm` | 书签 | 🟡 随意 |
 
@@ -612,7 +610,6 @@ D:\HandMade\HandMade.srctrlprj
 | 发布页(下载) | <https://github.com/CoatiSoftware/Sourcetrail/releases> |
 | Bug Tracker(已归档) | <https://github.com/CoatiSoftware/SourcetrailBugTracker> |
 | 自研索引 API | <https://github.com/CoatiSoftware/SourcetrailDB> |
-| Emacs 插件 | <https://github.com/CoatiSoftware/emacs-sourcetrail> |
 | 本机官方文档副本 | `%TEMP%\Sourcetrail_DOCUMENTATION.md`(169 KB,从 GitHub API 取回) |
 
 > ⚠️ 注意:`Help → Documentation` 菜单里那个网址指向的官网**已经下线**,点了打不开 —— 要看文档就用上表的 GitHub 链接。

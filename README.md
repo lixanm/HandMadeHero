@@ -63,14 +63,16 @@
 ```
 HandMade.sln                        解决方案（VS2022）
 NOTES.md                            工作约定：AI 助手的默认行为（只读 / 先交底 / 不擅自提交）
+GLOSSARY.md                         词汇表（只放最容易各写各的那几个词；完整译名以术语表为准）
+.dsh/skills/                        给 AI 的技能（会自动加载：盘问 / 调试循环 / 写文档判据）
+.agents/adr/                        关键决策记录（决定了什么、为什么、代价是什么）
 HandMade/                           项目文件夹
-├── HandMade.vcxproj                工程设置都在这里
+├── HandMade.vcxproj                ★ 编译/链接设置的唯一真源（VS2022 里按 F7 就是它）
 ├── code/
 │   └── win32_handmade.cpp          目前唯一的源文件（Win32 平台层）
-├── build.bat                       命令行构建（Casey 的工作流，输出到 build/）
-├── debug.bat                       先 build.bat，再用 RAD Debugger 打开产物
-├── shell.bat                       打开一个带 VS 开发环境的命令行
-└── emacs.bat                       在带 VS 开发环境的上下文里启动 Emacs
+├── build.bat                       命令行一行构建（只是 msbuild 的包装，不含编译选项）
+└── shell.bat                       打开一个带 VS 开发环境的命令行
+debug.bat                           先构建，再用 RAD Debugger 打开产物（在仓库根目录）
 compile_commands.json               给 clangd / Sourcetrail 用的编译数据库（clang 语法）
 HandMade.srctrlprj                  Sourcetrail 工程文件
 explain/                            学习文档
@@ -86,33 +88,31 @@ explain/                            学习文档
 
 ## 怎么编译运行
 
-### 方式 A：Visual Studio 2022（入门推荐）
+### 方式 A：Visual Studio 2022（**唯一真源**，2026-09-30 起）
 
-打开 `HandMade.sln`，按 **F5** 运行（`Ctrl+F5` 不调试运行）。
+打开 `HandMade.sln`，选 `Debug|x64` → **F7** 生成、**F5** 调试、`Ctrl+F5` 不调试运行。
 
-四个配置都编过：`Debug|Win32`、`Release|Win32`、`Debug|x64`、`Release|x64`（2026-09-18 验证；工程文件此后没再改）。
+- **编译/链接设置的唯一真源 = `HandMade\HandMade.vcxproj`。**
+  以前这里有两套配置：命令行的 `build.bat` 和 VS 工程，而两者的选项并不一致（警告等级、`/WX`、预处理宏、运行库、链接库，连 exe 名字都不同），
+  "VS 里能过、命令行过不了"这类问题迟早会出现。现在统一：**VS 工程说了算**。
+- 输出：`x64\Debug\HandMade.exe` / `x64\Release\HandMade.exe`（在**仓库根目录**下，不在 `HandMade\` 里）
+- 四个配置都编过：`Debug|Win32`、`Release|Win32`、`Debug|x64`、`Release|x64`（2026-09-30 用 msbuild 全量 Rebuild 复核）
+
+想在命令行 / 脚本里构建：
 
 ```powershell
 & "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe" `
   HandMade.sln /p:Configuration=Debug /p:Platform=x64
 ```
 
-### 方式 B：`build.bat`（Casey 的工作流，**权威构建**）
+### 方式 B：`build.bat`（只是上面那条 msbuild 的包装）
 
 ```cmd
-HandMade\build.bat
+HandMade\build.bat            :: Debug|x64（默认）
+HandMade\build.bat release    :: Release|x64
 ```
 
-- 输出：`HandMade\build\win32_handmade.exe`
-- 脚本用 `%~dp0` 定位自己，并自己调用 VS2022 的 `VsDevCmd.bat`，所以**在哪儿双击都能用**
-- ⚠️ 因为用 `%~dp0`：**从哪条路径调用，哪条路径就会被写进 .exe/.pdb**（调试器靠它找源码）。
-  之前一直是从 `D:\HandMade\...` 调用的，源路径就是 `D:\...`
-- 编译参数：`-Od -nologo -FC -WX -W4 -MTd -GR- -EHa- -Zi`（外加一串 `-wd` 抑制）
-  - **`-W4 -WX`：警告等级 4，而且警告当错误** —— 出现任何警告都算编译失败（Casey 故意的）
-  - **`-MTd`：静态链接调试版 C 运行库** —— 编出来的 exe 不依赖 VC 运行库；VS 工程默认的 `/MDd` 则需要目标机器装运行库
-  - `-wd4201 -wd4100 -wd4505 -wd4189 -wd4457 -wd4456 -wd4819` 是**已经存在的**抑制列表
-    （⚠️ 注意它同时把"定义了没用到的局部变量"这类问题也压掉了，所以编译器不会替你抓）
-- 在 Emacs 里按 `M-m` 就会调用它（键位见 `explain/Emacs键位表-VS2022风格.md`）
+它**本身不含任何编译选项**（所以不可能和 VS 工程跑偏），只做两件事：调 `VsDevCmd.bat` 让 `msbuild` 可用，然后 `msbuild HandMade.sln`。
 
 ### 方式 C：编译 + 进调试器
 
@@ -140,9 +140,18 @@ HandMade\debug.bat
 | **子系统** | **Windows** | 入口点是 `WinMain`（写成 Console 会报 `LNK2019: 无法解析的外部符号 main`） |
 | 平台工具集 | v143（VS2022） | |
 | 配置 | Debug / Release × Win32 / x64 | |
-| 警告等级 | `/W3`（VS 工程）／`-W4 -WX`（build.bat） | 两条路线的严格程度不一样 |
+| 警告等级 | **`/W4` + 警告当错 `/WX`** | 对齐 Casey：出现**任何**警告都算编译失败 |
+| 抑制的警告 | `4201 4100 4505 4189 4457 4456 4819` | 和 Casey 同一份名单。⚠️ 它同时把"定义了没用到的局部变量"这类问题压掉了，编译器不会替你抓 |
+| 运行库 | **`/MTd`（Debug）/ `/MT`（Release）** | **静态链接 C 运行库**，exe 不依赖 VC 运行库 DLL（2026-09-30 用 `dumpbin /dependents` 核实：只有 `USER32/GDI32/KERNEL32`） |
+| 优化 | `/Od`（Debug）/ `/O2`（Release） | |
+| RTTI / 异常 | `/GR-` `/EHa-` | 我们按 C 风格写，这两个都不用 |
+| 全路径诊断 | `/FC` | 报错带完整路径；VS 里双击错误 / 错误列表能直接跳到那一行 |
+| 预处理宏 | `HANDMADE_SLOW` / `HANDMADE_INTERNAL` / `HANDMADE_WIN32` | Casey 的三个开关：Debug 全为 1，Release 前两个为 0（目前代码还没用到，先按他的约定定义好） |
+| 输出 | `x64\<Config>\HandMade.exe` | MSBuild 的解决方案级输出路径 |
 
-**链接的库**：`build.bat` 只显式链 `user32.lib gdi32.lib winmm.lib`（VS 工程另有默认库）。
+**链接的库**：`user32.lib gdi32.lib winmm.lib` —— 三者都由工程显式链接（GDI 负责画窗口；winmm 以后计时/音频要用）。
+
+> ⚠️ VS 工程另外还开着 **`/permissive-`**（比 Casey 的参数更严格）。目前代码能过；哪天它报了 Casey 那边不报的错，那是**严格度**差异而不是代码错，可以把「符合模式」关掉来对齐。
 
 > ⚠️ **手柄不链接 `xinput.lib`**（Day 006 的结论，和"以后要用就加库"的直觉相反）：
 > 一旦链上，Windows 在**启动时**就要求 `xinput1_3.dll` 存在，没装的机器**游戏整个打不开**；
@@ -156,7 +165,6 @@ HandMade\debug.bat
 - Windows 10 / 11
 - **Visual Studio 2022**，勾选"使用 C++ 的桌面开发"工作负载（本机是 Professional + Windows SDK 10.0.26100）
 - 可选：
-  - [Emacs](https://www.gnu.org/software/emacs/) 30.2（Casey 用的编辑器；`emacs.bat` 会在带 VS 环境的上下文里启动它，这样 `M-x compile` 和 clangd 都能找到 `cl.exe`）
   - [RAD Debugger](https://github.com/EpicGames/raddebugger) 0.9.28-alpha（见方式 C）
   - [Sourcetrail](https://github.com/CoatiSoftware/Sourcetrail) 2021.4（**已停止维护**，见方式 D）
 
@@ -188,7 +196,6 @@ HandMade\debug.bat
 | 文件 | 内容 |
 |---|---|
 | `HANDMADE_HERO_终点与导航.md` | **《手工英雄》这款游戏的地图**（终点 Day 667，项目已退休）：哪一段在做引擎、哪一段在做**他自己的**游戏内容。<br>⚠️ 这是**参考**，不是我们的设计文档 —— 我们做的是**类银河城**，只借用它的**引擎层时间线**（尤其平台层 001–025）。<br>🟡 该文档自己也声明过：里面关于视频内容的描述是**推断**（作者没看过全部视频） |
-| `Emacs键位表-VS2022风格.md` | 用真实 Emacs 加载 `init.el` 后逐键实测导出的键位表 |
 | `win32-api-guide.md` | **Win32 API 检索速查**："想实现某功能该用哪个函数"的操作手册 |
 | `Sourcetrail 使用指南.md` | 装、配、建索引、看调用图（含 MSVC 参数为什么不认） |
 | `RAD Debugger 使用手册 (0.9.28-alpha).md` | 界面、断点、监视、`--ipc`、常见坑 |

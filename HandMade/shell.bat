@@ -4,11 +4,11 @@ rem  shell.bat - open a command prompt with the VS2022 developer environment
 rem  Equivalent of the official Handmade Hero misc\shell.bat
 rem  (that one points at VS2019 and his w:\ drive).
 rem
-rem  Use it to type raw cl commands by hand, or to start Emacs from a shell
-rem  that already has the VS environment loaded.
+rem  Use it to type raw cl commands by hand, or to run msbuild / build.bat
+rem  without opening Visual Studio.
 rem
-rem  Note: with VsDevCmd already inside build.bat, you do NOT need this file
-rem        to use M-m. It is a convenience.
+rem  Note: this is only a convenience - Visual Studio (F7) and build.bat both
+rem        load the VS environment themselves.
 rem
 rem  KEEP THIS FILE ASCII-ONLY (cmd.exe reads .bat with the OEM codepage).
 rem ===========================================================================

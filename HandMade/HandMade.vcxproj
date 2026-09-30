@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ===========================================================================
+   HandMade.vcxproj —— 本仓库【唯一】的构建配置真源(2026-09-30 起)
+
+   背景:以前有两套构建配置 —— HandMade\build.bat(命令行 cl)和这个 VS 工程,
+   而两者的编译选项并不一致(警告等级/WX/宏/运行库/链接库/exe 名字全不同),
+   "在 VS 里能过、命令行过不了"这类问题迟早出现。
+   现在统一为:本文件说了算;build.bat 已退化为一行 msbuild 的便利入口,
+   不再包含任何编译选项。
+
+   下面每一项都对齐 Casey 的手工英雄参数(见各条注释) —— 也就是说
+   "VS 里按 F7" 和 "命令行 build.bat" 现在产出完全一样的东西。
+  ===========================================================================
+-->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -26,31 +40,22 @@
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+  <!-- CharacterSet=MultiByte 对应 HANDMADE 的 ANSI 接口(PeekMessageA / LoadLibraryA / char 字符串)。
+       ⚠️ 不要改成 Unicode:那会让 MessageBox 之类的调用全部编译不过。 -->
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
+    <!-- /INCREMENTAL:NO —— 对齐 Casey 的 -incremental:no(增量链接 + 编辑继续会留下过期代码) -->
+    <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
-    <CharacterSet>MultiByte</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>MultiByte</CharacterSet>
+    <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -70,58 +75,75 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+
+  <!-- ======================================================================
+       Debug(Win32 / x64 共用同一套选项,只有平台相关的东西交给 MSBuild 自己填)
+         优化      Disabled           /Od
+         警告      Level4             /W4   ← 之前是 Level3,少报一层
+         警告当错  true               /WX   ← 之前没开,警告不再打断编译
+         全路径    true               /FC   (报错可双击跳到源码)
+         运行库    MultiThreadedDebug /MTd  ← 之前是 /MDd,exe 会依赖 VC 运行时 DLL
+         RTTI      false              /GR-  (我们不用)
+         异常      false              /EHa- (我们自己检查错误码,不用 C++ 异常)
+         内建函数  true               /Oi
+         /sdl      false                    (对齐 Casey 的参数表,不开额外安全检查)
+         /permissive- 保持开启(比 Casey 更严;他那些写法在这个项目里能过)
+       ====================================================================== -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DisableSpecificWarnings>4201;4100;4505;4189;4457;4456;4819;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <UseFullPaths>true</UseFullPaths>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <PreprocessorDefinitions>HANDMADE_SLOW=1;HANDMADE_INTERNAL=1;HANDMADE_WIN32=1;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>user32.lib;gdi32.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+
+  <!-- ======================================================================
+       Release(Win32 / x64 共用)
+         优化      MaxSpeed           /O2
+         运行库    MultiThreaded     /MT   (同样是静态 CRT)
+         宏        HANDMADE_SLOW=0 / HANDMADE_INTERNAL=0(不开自检),HANDMADE_WIN32=1
+         其余同 Debug(除了不生成调试信息用 /Zi 的那部分)
+       ====================================================================== -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DisableSpecificWarnings>4201;4100;4505;4189;4457;4456;4819;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <UseFullPaths>true</UseFullPaths>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
+      <SDLCheck>false</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>HANDMADE_SLOW=0;HANDMADE_INTERNAL=0;HANDMADE_WIN32=1;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>user32.lib;gdi32.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
+
   <ItemGroup>
     <ClCompile Include="code\win32_handmade.cpp" />
   </ItemGroup>

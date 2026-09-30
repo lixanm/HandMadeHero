@@ -15,7 +15,10 @@ rem ===========================================================================
 setlocal
 
 set "RADDBG=C:\THOTH\RuanJian\raddebugger-0.9.28-alpha\raddbg.exe"
-set "TARGET=%~dp0HandMade\build\win32_handmade.exe"
+rem  TARGET is the MSBuild solution output. Since 2026-09-30 the VS project is the
+rem  single source of truth, so builds land at <repo>\x64\<Config>\HandMade.exe
+rem  (NOT HandMade\build\win32_handmade.exe any more).
+set "TARGET=%~dp0x64\Debug\HandMade.exe"
 
 if not exist "%RADDBG%" (
   echo [debug] RAD Debugger not found: "%RADDBG%"
