@@ -1,4 +1,22 @@
+---
+集数: "004"
+英文标题: Animating the Backbuffer
+别名:
+  - Day 4
+  - 后备缓冲动画
+标签:
+  - handmade-hero
+  - day/004
+  - 主题/图形
+  - 主题/平台层
+相关代码: HandMade/code/win32_handmade.cpp
+字幕: "explain/!subtitle/[Mira] Handmade Hero Day 004 - Animating the Backbuffer.txt"
+状态: 已完成
+---
+
 # Day 004 —— Animating the Backbuffer(让后备缓冲动起来)
+
+> **本篇导航**:一、这一集干了什么(总览) · 二、开场的关键更正:DC 和位图句柄都不要了 · 三、自己分配内存:`VirtualAlloc` · 四、pitch / stride,以及"上"到底是哪一边 · 五、开始画像素:第一个像素循环 · 六、做出渐变 + 让它动起来 · 七、Q&A 要点 · 八、和我们代码的关系 / 下一步(重要) · 附录
 
 > **素材**:`C:\Users\thoth\Downloads\[Mira] Handmade Hero Day 004 - Animating the Backbuffer.txt`
 > (3299 行字幕,约 1 小时;本文件按内容重排)
@@ -417,7 +435,7 @@ Day 4 对我们现在这份代码有几处**直接冲突的更正**:
 | 抽出 `RenderWeirdGradient(X, Y)` | 我们那段"临时纯色"填在 `ResizeDIBSection` 里 | ✅ 抽成函数,删掉临时纯色 |
 | 一次写 32 位像素(`(Green << 8) \| Blue`) | 我们临时那段是逐像素写 `0x00996633` | ✅ 改成他的渐变写法 |
 | `uint8` / `uint32` typedef | 我们还没定义 | ⬜ 加上(`stdint.h` 或自己 typedef) |
-| 加 `-FC` 编译参数(报错带完整路径,Emacs 里能直接跳行) | 📍**我们的 `build.bat` 里已经有 `-FC` 了** | ✅ 已完成 |
+| 加 `-FC` 编译参数(报错带完整路径,VS 里双击就能跳行) | 📍**我们的工程里已经有 `-FC` 了** | ✅ 已完成 |
 
 ### 我们下一步要做的(Day 4 版),按顺序
 
@@ -429,7 +447,8 @@ Day 4 对我们现在这份代码有几处**直接冲突的更正**:
 6. **改**:消息循环 → `while (Running) { while (PeekMessage(...PM_REMOVE)) {...} Render...; GetDC/StretchDIBits/ReleaseDC; ++XOffset; }`
 7. **改**:`win32UpdateWindow` 改成整窗刷新(`0, 0, Width, Height`),`WM_PAINT` 里仍然可以调它(或者干脆交给主循环)
 
-> ⚠️ 别忘了 `build.bat` 是 **`-W4 -WX`**(警告当错误):上面的 `uint8 Blue = (uint8)(X + XOffset);` 这种**显式转换**是必须的,不然会有"丢数据"的警告 → 直接编不过。
+> [!warning]
+> 别忘了 `build.bat` 是 **`-W4 -WX`**(警告当错误):上面的 `uint8 Blue = (uint8)(X + XOffset);` 这种**显式转换**是必须的,不然会有"丢数据"的警告 → 直接编不过。
 
 ---
 

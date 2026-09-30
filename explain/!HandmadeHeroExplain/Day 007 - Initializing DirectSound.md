@@ -1,10 +1,30 @@
+---
+集数: "007"
+英文标题: Initializing DirectSound
+别名:
+  - Day 7
+  - 初始化 DirectSound
+标签:
+  - handmade-hero
+  - day/007
+  - 主题/音频
+  - 主题/COM
+  - 主题/动态链接
+相关代码: HandMade/code/win32_handmade.cpp
+字幕: "explain/!subtitle/[Mira] Handmade Hero Day 007 - Initializing DirectSound.txt"
+状态: 已完成
+---
+
 # Day 007 - Initializing DirectSound
+
+> **本篇导航**:一、这一集干了什么(总览) · 二、开场三处更正 · 三、★ 现场翻车:运算符优先级(本集最值钱的一段) · 四、`bool` 的性能问题,和他的 `bool32` · 五、XInput 的性能陷阱(以后必须回来修) · 六、DirectSound:整体设计(他画的那张"糟糕的图") · 七、加载三件套(和 Day 006 的 XInput 完全同构) · 八、★ 两个"缓冲":主缓冲**其实不是缓冲** · 九、`SetCooperativeLevel`(协作级别)—— 以及"为什么必须等窗口建好" · 十、`DSBUFFERDESC` 和那个"清零小技巧" · 十一、★ `WAVEFORMATEX` 的字段顺序坑(本集真正的 bug) · 十二、这一集的结果清单 · 十三、Q&A 要点(从 `01:03:47` 到 `01:30:55`,占了近半小时) · 十四、和我们代码的关系 / 下一步(重要) · 附录 A–E
 
 > **这一集讲了什么**:开场三处更正(stub 返回值 / XInput 1.3↔1.4 / **Alt+F4**)、现场一个**运算符优先级翻车**、
 > 以及 DirectSound 初始化的**绝大部分**(主缓冲 + 格式 + 次缓冲)。
 > 结果:一路写到最后**两个调用都返回 `E_INVALIDARG`**,直播弹幕抓到原因 —— 是 `WAVEFORMATEX` 的**字段顺序**坑;改完当场通过。
 >
-> ⚠️ **本文档的证据等级**(沿用 `NOTES.md` §2.2 的规矩):
+> [!warning]
+> **本文档的证据等级**(沿用 `NOTES.md` §2.2 的规矩):
 > - 引用视频原话都标了**时间戳**;字幕是 **ASR 机器识别**,人名/API 名/数字几乎一定会错(本集把 `dsound.dll` 认成 "dound.dll"、`pUnkOuter` 认成 "punk outer");
 > - 凡涉及**API 签名、常量值、字段顺序**的,都在 **SDK 头文件**里核实过(下面都给文件名与原文);
 > - 文中 **✅ 实测** = 我在你这台机器上真跑过;**🟡** = 推断。
@@ -38,7 +58,8 @@
 - `00:01:47` 他当场翻了 `winerror.h`:**`ERROR_SUCCESS` 就是 0**。
 - 所以 stub 应该 `return(ERROR_DEVICE_NOT_CONNECTED);`(✅ 头文件实测值 **1167**),这样"库没加载 = 没有手柄"在调用方看来是一致的。
 
-> 📌 **这条我们早就记过**:`explain\2026-9\2026-9-23.md` §3.1 和 `Day 006` 附录 D.3 末尾都标了"stub `return 0` 语义反了"。
+> [!note]
+> **这条我们早就记过**:`explain\2026-9\2026-9-23.md` §3.1 和 `Day 006` 附录 D.3 末尾都标了"stub `return 0` 语义反了"。
 > 现在有 Casey 本人的确认:**不是风格问题,是 bug**。
 
 ### 2. XInput 1.3 / 1.4:改成"分层加载"
@@ -73,7 +94,8 @@ if (VKCode == VK_F4 && AltKeyWasDown)
 
 > `01:29:03` 附近 / `00:03:44` 段:"we don't really want it to do any other sys keys… especially because we may not want a cold exit on this"
 
-> ⚠️ **这条正好回答了我们上一轮的遗留问题**。我在给你写键盘那段时标过:"合并四个 case 标签之后 `WM_SYSKEYDOWN` 处理完就 `break`,**Alt+F4 可能不再能关窗**(未验证)"。
+> [!warning]
+> **这条正好回答了我们上一轮的遗留问题**。我在给你写键盘那段时标过:"合并四个 case 标签之后 `WM_SYSKEYDOWN` 处理完就 `break`,**Alt+F4 可能不再能关窗**(未验证)"。
 > 现在 Casey 亲口确认了这个副作用,并给出解法 —— 见第十四节第 3 条。
 
 ---
@@ -157,7 +179,8 @@ typedef int32 bool32;      /* 只要"是不是 0",不要那个 0/1 规范化 */
 - 但**这一次他保留了 `!= 0`** —— 因为他后面确实要拿它和 `IsDown` **比较**(见 Day 006 第八节)。
 - 他的取舍原话(大意):"我们其实浪费了一点时间(做那个 0/1 规范化)……但这次我们需要比较,所以得这么做。"
 
-> 📌 **对我们的含义**:我们现在写 `bool` + `!= 0` 是**对的、也是清楚的**;
+> [!note]
+> **对我们的含义**:我们现在写 `bool` + `!= 0` 是**对的、也是清楚的**;
 > `bool32` 属于"以后真做性能优化时"的选项 —— 正好呼应他自己反复讲的"别过早优化"。
 
 ---
@@ -172,14 +195,16 @@ typedef int32 bool32;      /* 只要"是不是 0",不要那个 0/1 规范化 */
 - 他建议的正确做法:**用 HID 通知**(设备插拔事件),只在"确实连着"的手柄上轮询。
 - 但**现在先不管**:`00:15:20` "we are not trying to be on the fast path right now" —— 这也正是他反复强调的:**别在东西还没跑通的时候去拧性能的旋钮**。
 
-> 📌 **对我们的含义**:我们的 `for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ...)` 是**已知会 stall 的写法**,
+> [!note]
+> **对我们的含义**:我们的 `for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ...)` 是**已知会 stall 的写法**,
 > 现在**故意留着**;等做性能那一集再换成"HID 通知 + 只轮询连着的手柄"。
 
 ---
 
 ## 六、DirectSound:整体设计(他画的那张"糟糕的图")
 
-> 📌 这一节**一行代码都没有**,但它是整集最值钱的部分 —— **概念错了,后面全错**。
+> [!note]
+> 这一节**一行代码都没有**,但它是整集最值钱的部分 —— **概念错了,后面全错**。
 > 下面 6.1~6.8 是按他画的图重新拆的层次;他的原话都带时间戳,建议挑 `00:20:11` 和 `01:11:41` 两段原声听一遍。
 
 ### 6.1 为什么是 DirectSound
@@ -461,7 +486,8 @@ nAvgBytesPerSec = nSamplesPerSec × nBlockAlign
 > `01:04:42` "Holy cow, dude. **That was it.**"
 > `01:04:46` "So just me misplacing the structure thing… **that was the only bug we had.**"
 
-> 📌 **注意一个反直觉的点**(他自己也讲了):**把结构体清零反而掩盖了这个 bug** ——
+> [!note]
+> **注意一个反直觉的点**(他自己也讲了):**把结构体清零反而掩盖了这个 bug** ——
 > 如果不清零,编译器可能会提醒"你用了没初始化的成员"(`C4700`);清零之后"用了 0"看起来完全合法。
 
 ---

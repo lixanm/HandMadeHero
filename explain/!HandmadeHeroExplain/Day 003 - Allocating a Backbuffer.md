@@ -1,4 +1,23 @@
+---
+集数: "003"
+英文标题: Allocating a Backbuffer
+别名:
+  - Day 3
+  - 分配后备缓冲
+标签:
+  - handmade-hero
+  - day/003
+  - 主题/图形
+  - 主题/内存
+  - 主题/平台层
+相关代码: HandMade/code/win32_handmade.cpp
+字幕: "explain/!subtitle/[Mira] Handmade Hero Day 003 - Allocating a Backbuffer.txt"
+状态: 已完成
+---
+
 # Day 003 —— Allocating a Backbuffer(分配后备缓冲)
+
+> **本篇导航**:一、这一集干了什么(总览) · 二、前半:让窗口能正常关闭 · 三、正题:分配后备缓冲(DIB section) · 四、Q&A 要点(约 58 分钟之后) · 五、和我们代码的关系 / 下一步
 
 > **素材**:`C:\Users\thoth\Downloads\[Mira] Handmade Hero Day 003 - Allocating a Backbuffer.txt`
 > (3255 行字幕,约 1 小时;本文件按内容重排,不是逐句翻译)
@@ -291,7 +310,8 @@ struct win32_dib_section_result {
 5. `WM_PAINT` 里把 `PatBlt` 换成 `win32UpdateWindow`
 6. **然后才是爽的部分**:自己往 `BitmapMemory` 里写像素(先做个会动的渐变)
 
-> ⚠️ 注意:我们的 `build.bat` 用的是 **`-W4 -WX`(警告当错误)**,所以新写的代码一旦有警告(比如未使用的变量、类型转换丢数据)就会**直接编译失败**。加代码时留意。
+> [!warning]
+> 注意:我们的 `build.bat` 用的是 **`-W4 -WX`(警告当错误)**,所以新写的代码一旦有警告(比如未使用的变量、类型转换丢数据)就会**直接编译失败**。加代码时留意。
 
 ### 附:本集出现的 API 速查
 

@@ -1,11 +1,33 @@
+---
+集数: "008"
+英文标题: Writing a Square Wave to DirectSound
+别名:
+  - Day 8
+  - 方波
+  - 写方波到 DirectSound
+标签:
+  - handmade-hero
+  - day/008
+  - 主题/音频
+  - 主题/COM
+  - 主题/数学
+  - 主题/Q&A
+相关代码: HandMade/code/win32_handmade.cpp
+字幕: "explain/!subtitle/[Mira] Handmade Hero Day 008 - Writing a Square Wave to DirectSound.txt"
+状态: 已完成
+---
+
 # Day 008 - Writing a Square Wave to DirectSound
+
+> **本篇导航**:一、这一集干了什么(总览) · 二、★ 开场:COM 与 vtable(为什么 `DirectSound->Method()` 能用) · 三、回顾昨天的初始化(以及 48kHz 是怎么定的) · 四、★ 把次缓冲指针升为全局(附他关于全局变量的规矩) · 五、★ 方波的数学(这一集的核心新知识) · 六、★ `Lock` 为什么可能返回**两块**区域 · 七、★ `GetCurrentPosition`:play cursor 与 write cursor · 八、★ 写缓冲的完整算法 · 九、`Play(0, 0, DSBPLAY_LOOPING)`:让它响 · 十、★ 现场:响了 → 太吵 → 咔哒声 → 忘了 `Unlock` · 十一、Q&A 前他当场补的两处(和"启动一秒后才出声"有关) · 十二、Q&A 要点(从 `01:10:32` 到 `01:31:15`) · 十三、和我们代码的关系 / 下一步 · 附录 A–D
 
 > **这一集讲了什么**:先用一大段**把 COM/vtable 讲透**(`DirectSound->Method()` 到底发生了什么),
 > 然后**把方波写进次缓冲**:算频率与周期、`GetCurrentPosition` 拿播放游标、`Lock`/`Unlock` 两段写入、`Play` 循环播放。
 > **结果**:真的响了 ✅ —— 但先"**太吵**",接着有"**咔哒声**",**弹幕提醒他忘了 `Unlock`**,补上后正常。
 > 结尾他承认**这块环形缓冲代码八成还有 bug**,明天专门调试(并改用正弦波,因为更容易听出问题)。
 >
-> ⚠️ 证据等级(沿用 `NOTES.md` §2.2):引用都带**时间戳**;字幕是 **ASR**,API 名/数字常有错;
+> [!warning]
+> 证据等级(沿用 `NOTES.md` §2.2):引用都带**时间戳**;字幕是 **ASR**,API 名/数字常有错;
 > 凡 **API 签名、常量值**都在本机 SDK 头文件里核实过(出处见附录 D)。**🟡** = 推断。
 
 ---
@@ -96,7 +118,8 @@ C++ 允许在 struct 里声明函数(用 `Foo::bar` 这种 **scoping operator** 
 
 这就是 `virtual` 干的事 —— 它**不是语法糖**,它真的改了对象的内存布局和调用点的指令。
 
-> ⭐ 一句话总结:`virtual` 把"调用哪个函数"这个问题,从**编译期的指令**变成了**运行期的数据**。
+> [!info]
+> 一句话总结:`virtual` 把"调用哪个函数"这个问题,从**编译期的指令**变成了**运行期的数据**。
 
 ---
 
@@ -240,7 +263,8 @@ DECLARE_INTERFACE_(IDirectSound, IUnknown)
 | `call qword ptr [rax+18h]` | `DirectSound->CreateSoundBuffer(...)` ×2 | `0x18 / 8 = 3` → `IDirectSound` 第 3 格 ✅ |
 | `call qword ptr [rax+70h]` | `PrimaryBuffer->SetFormat(...)` | `0x70 / 8 = 14` → `IDirectSoundBuffer` 第 14 格 ✅ |
 
-> 🟡 **证据出处说明**:上面这份汇编来自 `HandMade\build\win32_handmade.exe`(2026-09-24 21:14 编译,
+> [!question]
+> **证据出处说明**:上面这份汇编来自 `HandMade\build\win32_handmade.exe`(2026-09-24 21:14 编译,
 > 即**已提交版**源码的产物)。因为用了 `-Od`(不优化),编译器把每一步都老老实实写出来了;
 > **开优化之后可能不一样** —— 比如它可以把这个对象的 vtable 指针缓存进寄存器反复用、
 > 甚至证明"这里只有一个可能类型"而直接把目标写死(devirtualization)。
@@ -670,7 +694,8 @@ DllCanUnloadNow              DllGetClassObject
 | 普通函数(我们自己写的) | **`call <常量地址>`** —— 链接器把地址写死 | `00:11:12` |
 | 虚函数(`SetCooperativeLevel`) | **先 `mov` 出对象 → 再 `mov` 出 vtable 指针 → 再 `mov` 出函数地址 → `call rax`** | `00:11:46` |
 
-> 📌 这张表是他当时口述的**简化版**;精确版(把"别的 DLL 的导出函数 / 我们自己手写的函数指针"也区分开)见 **2.3.1**。
+> [!note]
+> 这张表是他当时口述的**简化版**;精确版(把"别的 DLL 的导出函数 / 我们自己手写的函数指针"也区分开)见 **2.3.1**。
 
 他还补了两点:
 
@@ -679,7 +704,8 @@ DllCanUnloadNow              DllGetClassObject
 2. **CPU 不在乎你写什么语言**:`00:10:20` "everything gets translated to CPU… languages make things simpler for the programmer, they do not make things any simpler for the CPU"。
 3. 他还很诚实地标了不确定:`00:12:52` "I'm not the best person at Assembly Language… I'm just basically assuming that this is roughly what it has to do" 🟡。
 
-> 📍 **对我们的意义**:为什么 DirectSound 的 API 要用 `对象->方法()` 这种形式,而 XInput 是"取一个函数指针直接调"?
+> [!tip]
+> **对我们的意义**:为什么 DirectSound 的 API 要用 `对象->方法()` 这种形式,而 XInput 是"取一个函数指针直接调"?
 > 因为 DirectSound 是 **COM** 接口:`DirectSoundCreate` 给你的**不是一个句柄,而是一个带 vtable 的对象**;
 > 之后那些方法**不需要再 `GetProcAddress`**,直接从这个对象里"跳"过去。
 > 我们**不需要懂 COM**,只要知道"这个箭头 = 两次间接寻址"就够了 —— 而且这一集他不会用任何 C++ 特性。
@@ -857,7 +883,8 @@ STDMETHOD(GetCurrentPosition)(THIS_ LPDWORD pdwCurrentPlayCursor, LPDWORD pdwCur
 他反复强调"**我们不去写超过 play cursor 的地方**"(`00:44:33`:"we don't want to write past the play cursor")。
 图在 `00:45:56` 起画了两遍(case one / case two)。
 
-> 📌 这两行就是"环形缓冲最容易写错的地方" —— 他在 `01:21:57` 亲口说:
+> [!note]
+> 这两行就是"环形缓冲最容易写错的地方" —— 他在 `01:21:57` 亲口说:
 > "**I always write it wrong the first time**",因为里面偏移量太多、还有"该用 sample index 还是 byte index"这种坑。
 
 ### 8.3 写样本:两个 region、左右声道交错
@@ -922,7 +949,8 @@ GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
 | `01:00:29` | 但他仍不放心:"我还要**更严格地验证缓冲里的内容**",并说**明天专门调试**这块 |
 | `01:21:57` | Q&A 里他承认:**环形缓冲的代码他"第一次写总是错的"**,所以必须**画图 + 逐项核对**"我们是不是真的写到了以为的地方" |
 
-> 📌 **两个 bug 都很典型**:① 音量没参数化,直接震耳朵;② **`Lock` 之后必须 `Unlock`**(文档明确写"must immediately call Unlock")——
+> [!note]
+> **两个 bug 都很典型**:① 音量没参数化,直接震耳朵;② **`Lock` 之后必须 `Unlock`**(文档明确写"must immediately call Unlock")——
 > 不 Unlock,DirectSound 会"confused",表现就是我们听到的周期性咔哒声。
 
 ---
@@ -1019,7 +1047,8 @@ if (!SoundIsPlaying)                 /* 第一帧:先把整个缓冲填满 */
 > `01:30:50` "I have advocated this for many years in the industry — **nobody cared**"。
 > 最后他给出"答案":**"how much latency you want — nobody knows, it's completely unknown"**。
 
-> 📍 **对我们的意义**:这条和 Day 007 §6.6(音画同步)是同一件事,但这里给出了**为什么做不到**的完整理由链:
+> [!tip]
+> **对我们的意义**:这条和 Day 007 §6.6(音画同步)是同一件事,但这里给出了**为什么做不到**的完整理由链:
 > Windows 不告诉你帧什么时候翻 → 电视/功放再各自加延迟 → 所以只能**估**,并且**别把"完美同步"写进需求**。
 
 ### 12.4 代码与风格

@@ -1,4 +1,24 @@
+---
+集数: "006"
+英文标题: Gamepad and Keyboard Input
+别名:
+  - Day 6
+  - 手柄与键盘
+  - XInput
+标签:
+  - handmade-hero
+  - day/006
+  - 主题/输入
+  - 主题/动态链接
+  - 主题/平台层
+相关代码: HandMade/code/win32_handmade.cpp
+字幕: "explain/!subtitle/[Mira] Handmade Hero Day 006 - Gamepad and Keyboard Input.txt"
+状态: 已完成
+---
+
 # Day 006 —— Gamepad and Keyboard Input(手柄与键盘输入)
+
+> **本篇导航**:一、这一集干了什么(总览) · 二、XInput 是什么,以及**为什么非用它不可** · 三、轮询 vs 中断,以及那个 **packet number** · 四、`XINPUT_GAMEPAD` 逐字段(以及**老派游戏需要哪些**) · 五、★ 链接问题:为什么不直接链接 `xinput.lib` · 六、★ 自己动态加载:三件套 + 那个"宏技巧" · 七、`Win32LoadXInput()`:真正把它加载进来 · 八、★ 键盘输入:`WPARAM` / `LPARAM` 解密 · 九、⚠️ 结尾的自我更正(这条**直接影响我们的代码**) · 十、Q&A 要点 · 十一、和我们代码的关系 / 下一步(重要) · 附录 A–D
 
 > **素材**:`D:\HandMade\explain\!subtitle\[Mira] Handmade Hero Day 006 - Gamepad and Keyboard Input.txt`
 > (775 条字幕,3,099 行,约 **1 小时 32 分**;本文件按内容重排,不是逐句翻译)
@@ -157,7 +177,8 @@ unresolved external symbol _XInputGetState referenced in function _WinMain
 
 **所以他不放心直接链接 `xinput.lib`,理由是**:
 
-> ⚠️ **如果直接链接,程序启动时由 Windows 加载器解析导入表。一旦用户机器上找不到那个 DLL,游戏就"整个加载不起来"(flat out won't load)。**
+> [!warning]
+> **如果直接链接,程序启动时由 Windows 加载器解析导入表。一旦用户机器上找不到那个 DLL,游戏就"整个加载不起来"(flat out won't load)。**
 
 而这**完全不可接受**,因为:
 
@@ -308,7 +329,8 @@ bool WasDown = ((LParam & (1 << 30)) != 0);
 bool IsDown  = ((LParam & (1 << 31)) == 0);
 ```
 
-> ⚠️ **为什么要写 `!= 0`**(他专门停下来讲):`LParam & (1 << 30)` 得到的结果**不是 0 或 1**,而是 **0 或者"bit 30 被置上的那个大数"**。
+> [!warning]
+> **为什么要写 `!= 0`**(他专门停下来讲):`LParam & (1 << 30)` 得到的结果**不是 0 或 1**,而是 **0 或者"bit 30 被置上的那个大数"**。
 > 而 **C 里的比较运算保证产出 0 或 1**,所以 `!= 0` 正好把它**规范成 0/1**。
 > (他顺便承认:intro to C 里讲这条的时候他自己**也有点不确定**,挺奇怪的。)
 >
@@ -415,7 +437,8 @@ if (WasDown != IsDown)   // 只有"状态真的变了"才处理
 | `Win32DisplayBufferInWindow(..., win32_offscreen_buffer Buffer, ...)` —— **按值传** | 同上 | ✅ **改回传指针** |
 | `Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, ...)` —— 传指针 | ✅ 本来就对 | ⬜ 不动 |
 
-> ⚠️ 这是**第二次**出现"Day 5 说按值、Day 6 说传指针"的反转,**所以别把 Day 005 文档里"按值传"那条当定论** ——
+> [!warning]
+> 这是**第二次**出现"Day 5 说按值、Day 6 说传指针"的反转,**所以别把 Day 005 文档里"按值传"那条当定论** ——
 > 本文件这一节才是最新的。📍**说明**:Day 005 里他当场也承认过"我不知道哪个更好,我们试试看",这次他给出了结论。
 
 ### 11.2 其它要跟着改的
@@ -691,7 +714,8 @@ Casey 原话(字幕第 **155** 行):"the XInput is a **polling based API** which
 - 3D 相关的最早集数(🟡 来自 `explain\HANDMADE_HERO_终点与导航.md`,那份文档自认是推断):
   **071–111** 3D 化 + 透视投影;**112–131** SIMD 光栅化;**331–378** 深度缓冲 / 3D 旋转矩阵;**470–545** 立方体 UV。
 
-> ⚠️ **而且我们的游戏是类银河城,不是他的地牢**(2026-09-24 定的事):
+> [!warning]
+> **而且我们的游戏是类银河城,不是他的地牢**(2026-09-24 定的事):
 > **引擎层跟着学;玩法、关卡与地图结构、能力解锁与回溯、存档点、Boss —— 自己设计。**
 > 别把 HH 后期的地牢生成、体积光照、Brains 当成"我们也要做"。详见 `README.md` 开头与 `NOTES.md` 的"项目定位"。
 
@@ -713,5 +737,6 @@ Casey 原话(字幕第 **155** 行):"the XInput is a **polling based API** which
 再**伪造一条"重复"消息**(bit30=1、bit31=0)⇒ **没有任何输出** ⇒ **重复过滤真的生效**;
 另外启动日志里的 `ModLoad: C:\WINDOWS\SYSTEM32\xinput1_3.dll` 顺带证明**动态加载成功**(DLL 是运行时加载的,不是链接进来的)。
 
-> ⚠️ 补一句:那次验证里,"伪造消息"是 `PostMessage` 直接投递的 —— 它绕过系统输入队列,但走的是**同一个窗口过程**,
+> [!warning]
+> 补一句:那次验证里,"伪造消息"是 `PostMessage` 直接投递的 —— 它绕过系统输入队列,但走的是**同一个窗口过程**,
 > 所以能证明处理逻辑;真实按键那条路径另外用 `keybd_event` 单独验过。
