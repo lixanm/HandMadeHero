@@ -86,7 +86,8 @@ global_variable int    BytesPerSample = sizeof(int16) * 2;  /* 16 位 × 2 声�
 global_variable uint32 RunningSampleIndex = 0;              /* ★ 必须全局:永远递增,跨帧不归零 */
 global_variable int16  ToneVolume = 3000;                   /* 音量(相对 32767 很小,不刺耳) */
 global_variable int    SecondaryBufferSize;                 /* ★ 必须 == 创建次缓冲时的 dwBufferBytes */
-
+global_variable bool SoundIsPlaying;
+global_variable int    HalfSquareWavePeriod;             /* 半个方波周期(采样数) = (SamplesPerSecond / Hz) / 2 */
 
 global_variable int BytesPerPixel = 4;     //每像素 4 字节(32bpp)
 global_variable bool Running;              // 是否在跑    
@@ -116,7 +117,7 @@ Win32LoadXinput()
 }
 /*声音*/
 internal void
-Win32InitSound(HWND Window,int32 BufferSize)
+Win32InitSound(HWND Window,int SamplesPerSecond,int32 BufferSize)
 {
     /*加载 dsound.dll(缺了只是没声音;故意不 FreeLibrary)。 */
     HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");//DLL文件基地址
@@ -133,8 +134,6 @@ Win32InitSound(HWND Window,int32 BufferSize)
 
 
 			/* 格式与缓冲长度:放函数作用域,主缓冲和次缓冲都要用。 */
-			uint32 SamplesPerSecond = 48000;
-			uint32 SecondsToWrite = 2;       /* 2 秒 = 抗卡顿的减震器 */
 
 
 			/* ⚠️ 先算 nBlockAlign 再算 nAvgBytesPerSec(结构体里顺序是反的,否则 E_INVALIDARG)。 */
@@ -473,6 +472,22 @@ WindowMainWindowCallback(HWND Window,      // 消息是发给哪个窗口的
     return Result;
 }
 
+/* 往【一段】(region)缓冲里填方波样本。
+   为什么要单独一个函数:Lock 可能把要写的位置切成两段(跨过缓冲末尾时),
+   而两段的写法【完全一样】—— 抽出来才能保证"改方波公式时只改一处";
+   否则跨末尾的那一小会儿会出现音色不同 —— 那种 bug 只在绕环时出现,极难查。 */
+internal void
+Win32FillSquareWave(int16 *SampleOut, DWORD SampleCount)
+{
+    for (DWORD SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex)
+    {
+        /* 方波:每 HalfSquareWavePeriod 个采样翻转一次符号 */
+        int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2) ? ToneVolume : -ToneVolume;
+        *SampleOut++ = SampleValue;   /* 左声道 */
+        *SampleOut++ = SampleValue;   /* 右声道 —— 同值 = 单声道听感 */
+    }
+}
+
 /* 程序入口(Windows 子系统找的是 WinMain,不是 main) */
 int WINAPI
 WinMain(HINSTANCE hInstance,       
@@ -539,10 +554,10 @@ WinMain(HINSTANCE hInstance,
             int Hz = 256;
 			//int SquareWaveCount = 0;//方波计数器
 			int SquareWavePeriod = SamplesPerSecond / Hz;        /* 187 */
-			int HalfSquareWavePeriod = SquareWavePeriod / 2;     /* 93 ← 新增,写方波要用 */
+			HalfSquareWavePeriod = SquareWavePeriod / 2;     /* 93 ← 新增,写方波要用 */
 
 			SecondaryBufferSize = SamplesPerSecond * BytesPerSample * 2;   /* 2 秒 = 384000 字节 */
-			Win32InitSound(Window, SecondaryBufferSize);                   /* ← 传的是同一个值 */
+			Win32InitSound(Window, SamplesPerSecond ,SecondaryBufferSize);                   /* ← 传的是同一个值 */
 
 
 
@@ -647,6 +662,16 @@ WinMain(HINSTANCE hInstance,
                 RenderWeirdGradient(&GlobalBackBuffer,Xoffset, Yoffset);
 
 
+                /* —— ③ 贴图:⚠️ 这一步不能少!只渲染不 blit,屏幕上什么都不会变
+                       —— 这也是 Casey 在 Day 4 现场犯的第二个错。
+                       GetDC 是"借"、ReleaseDC 是"还",必须成对出现。 —— */
+                HDC DeviceContext = GetDC(Window);
+
+                win32_window_dimension Dim = Win32GetWindowDimension(Window);
+                Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, &GlobalBackBuffer);
+
+                ReleaseDC(Window, DeviceContext);
+
 
                 //音效输出
 				/* Lock 之前,先把这几样准备好 */
@@ -666,7 +691,10 @@ WinMain(HINSTANCE hInstance,
    乘以"每个采样帧多少字节" = "已经写过多少字节",再 % 缓冲大小 ⇒ 折回环形缓冲的位置。 */
                     ByteToLock = (RunningSampleIndex * BytesPerSample) % SecondaryBufferSize;
 
+
+
                     /* —— (2) 这次要写多少字节:一直写到 play cursor 之前为止 —— */
+                    
                     if (ByteToLock > PlayCursor)
                     {
                         /* 我落在播放头【后面】:先写到缓冲末尾,再绕回头写到播放头 */
@@ -685,51 +713,31 @@ WinMain(HINSTANCE hInstance,
                         BytesToWrite = PlayCursor - ByteToLock;
                     }
 
-						if (SUCCEEDED(GlobalSecondaryBuffer -> Lock(ByteToLock, BytesToWrite,
-							                                        &Region1, &Region1Size,
-							                                        &Region2, &Region2Size,
-							                                        0)))          // ← dwFlags = 0
-						{
-							/* 往 Region1(+Region2)里写方波样本 */
-                            /* —— (3) 写第一段 —— */
-                            int16* SampleOut = (int16*)Region1;
-                            DWORD Region1SampleCount = Region1Size / BytesPerSample;
-                            for (DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; ++SampleIndex)
-                            {
-                                /* 方波:每 HalfSquareWavePeriod 个采样翻转一次符号 */
-                                int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2)
-                                    ? ToneVolume : -ToneVolume;
-                                *SampleOut++ = SampleValue;   /* 左声道 */
-                                *SampleOut++ = SampleValue;   /* 右声道 —— 同值 = 单声道听感 */
-                            }
 
-                            /* —— (4) 写第二段:只有"跨过缓冲末尾"时才有第二块;
-                                   没跨时 Region2 是 NULL / Region2Size 是 0,这个循环体一次都不会进 —— */
-                            int16* SampleOut2 = (int16*)Region2;
-                            DWORD Region2SampleCount = Region2Size / BytesPerSample;
-                            for (DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; ++SampleIndex)
-                            {
-                                int16 SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2)
-                                    ? ToneVolume : -ToneVolume;
-                                *SampleOut2++ = SampleValue;  /* 左声道 */
-                                *SampleOut2++ = SampleValue;  /* 右声道 */
-                            }
+                    if (SUCCEEDED(GlobalSecondaryBuffer->Lock(ByteToLock, BytesToWrite,
+                        &Region1, &Region1Size,
+                        &Region2, &Region2Size,
+                        0)))          // ← dwFlags = 0
+                    {
+                        /* 往 Region1(+Region2)里写方波样本 */
+                        /* —— (3) 写第一段 —— */
+                        Win32FillSquareWave((int16 *)Region1, Region1Size / BytesPerSample);
+
+                        /* —— (4) 第二段:只有跨过缓冲末尾时才有;没跨时 Region2Size == 0,函数里循环一次都不进 —— */
+                        Win32FillSquareWave((int16 *)Region2, Region2Size / BytesPerSample);
 
 
-							GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
-						}
+                        GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+
+                        /* 先填满,再按下播放键 —— 否则播放头会从一个还没写过的缓冲开始播 ⇒ 启动有一秒空白(§11.1) */
+                        if (!SoundIsPlaying)
+                        {
+                            GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
+                            SoundIsPlaying = true;
+                        }
+                    }
 				}
 
-
-                /* —— ③ 贴图:⚠️ 这一步不能少!只渲染不 blit,屏幕上什么都不会变
-                       —— 这也是 Casey 在 Day 4 现场犯的第二个错。
-                       GetDC 是"借"、ReleaseDC 是"还",必须成对出现。 —— */
-                HDC DeviceContext = GetDC(Window);
-
-                win32_window_dimension Dim = Win32GetWindowDimension(Window);
-                Win32DisplayBufferInWindow(DeviceContext, Dim.Width, Dim.Height, &GlobalBackBuffer);
-
-                ReleaseDC(Window, DeviceContext);
 
 
             }
